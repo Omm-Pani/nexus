@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "fixture": "nav-vs-collection",
+  "controls": [
+    { "label": "Home", "type": "navigation", "kind": "navigate", "risk": "safe", "selector": "nav a[href=\"/home\"]", "frame": "main", "shadowPath": [] },
+    { "label": "Products", "type": "navigation", "kind": "navigate", "risk": "safe", "selector": "nav a[href=\"/products\"]", "frame": "main", "shadowPath": [] },
+    { "label": "Orders", "type": "navigation", "kind": "navigate", "risk": "safe", "selector": "nav a[href=\"/orders\"]", "frame": "main", "shadowPath": [] },
+    { "label": "Settings", "type": "navigation", "kind": "navigate", "risk": "safe", "selector": "nav a[href=\"/settings\"]", "frame": "main", "shadowPath": [] },
+    { "label": "Help", "type": "navigation", "kind": "navigate", "risk": "safe", "selector": "nav a[href=\"/help\"]", "frame": "main", "shadowPath": [] },
+    { "label": "Add product", "labelPattern": "^Add .+$", "type": "button", "kind": "unknown", "risk": "mutating", "selector": ".product-card button", "minimumMatches": 5, "frame": "main", "shadowPath": [] }
+  ],
+  "observables": [
+    { "label": "Price", "valuePattern": "^\\$\\d+\\.\\d{2}$", "kind": "value_display", "valueType": "currency", "selector": ".product-card .price", "minimumMatches": 5, "frame": "main" }
+  ],
+  "collections": [
+    {
+      "label": "Product grid",
+      "selector": "#product-grid",
+      "instancesObserved": 5,
+      "instancesDeclared": 5,
+      "traversal": "static",
+      "shouldPromote": true,
+      "anchors": ["Atlas Backpack", "Beacon Lamp", "Comet Bottle", "Drift Jacket", "Ember Shoes"],
+      "itemActions": ["Add product"],
+      "itemObservables": ["Price"]
+    }
+  ],
+  "rejectedCollections": [
+    { "label": "Site navigation", "selector": "nav", "reason": "global_navigation" }
+  ],
+  "warnings": [
+    { "code": "collection_rejected", "ref": "Site navigation" }
+  ]
+}

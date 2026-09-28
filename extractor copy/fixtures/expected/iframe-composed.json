@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "fixture": "iframe-composed",
+  "controls": [
+    { "label": "Main frame action", "type": "button", "kind": "unknown", "risk": "unknown", "selector": "#main-action", "frame": "main", "shadowPath": [] },
+    { "label": "Frame name", "type": "input", "kind": "input", "risk": "reversible", "selector": "#frame-name", "frame": "main/iframe#same-origin", "shadowPath": [] },
+    { "label": "Save frame name", "type": "button", "kind": "unknown", "risk": "mutating", "selector": "#save-frame", "frame": "main/iframe#same-origin", "shadowPath": [] },
+    { "label": "Plan", "type": "input", "kind": "select", "risk": "reversible", "selector": "#frame-plan", "frame": "main/iframe#cross-origin", "shadowPath": [] },
+    { "label": "Cross-origin help", "type": "navigation", "kind": "navigate", "risk": "safe", "selector": "#frame-help", "frame": "main/iframe#cross-origin", "shadowPath": [] }
+  ],
+  "observables": [
+    { "label": "Frame status", "kind": "value_display", "valueType": "text", "selector": "#frame-status", "initialValue": "Not saved", "frame": "main/iframe#same-origin" }
+  ],
+  "collections": [],
+  "warnings": []
+}

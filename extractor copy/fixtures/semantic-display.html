@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>Products — Inventory</title>
+    <style>
+      body { margin: 24px; font: 16px system-ui; }
+      header, form, section { margin-bottom: 20px; }
+      label { display: block; margin: 8px 0; }
+      .inventory { display: flex; gap: 20px; }
+      article { border: 1px solid #ccc; padding: 12px; }
+    </style>
+  </head>
+  <body>
+    <header aria-label="Header">
+      <button aria-expanded="false" aria-controls="menu" onclick="const menu = document.getElementById('menu'); menu.hidden = !menu.hidden; this.setAttribute('aria-expanded', String(!menu.hidden));">Hamburger Menu</button>
+      <a href="#cart">Shopping Cart Link</a>
+      <nav id="menu" aria-label="Hamburger Menu Items" hidden>
+        <a href="#all">All Items</a><a href="#about">About</a><a href="#logout">Logout</a>
+      </nav>
+    </header>
+    <main>
+      <form aria-label="Login" onsubmit="event.preventDefault()">
+        <label>Username <input name="username" autocomplete="username"></label>
+        <label>Password <input type="password" name="password" autocomplete="current-password"></label>
+        <button type="submit">Login</button>
+      </form>
+      <section aria-label="Filter">
+        <label>Sort dropdown <select><option>Name (A to Z)</option><option>Price (low to high)</option></select></label>
+      </section>
+      <section aria-label="Inventory Container" class="inventory">
+        <article><h2><a href="#backpack">Backpack</a></h2><p>$29.00</p><button>Add Backpack</button></article>
+        <article><h2><a href="#bike-light">Bike Light</a></h2><p>$9.00</p><button>Add Bike Light</button></article>
+        <article><h2><a href="#bolt-shirt">Bolt T-Shirt</a></h2><p>$15.00</p><button>Add Bolt T-Shirt</button></article>
+        <article><h2><a href="#fleece">Fleece Jacket</a></h2><p>$49.00</p><button>Add Fleece Jacket</button></article>
+      </section>
+    </main>
+  </body>
+</html>

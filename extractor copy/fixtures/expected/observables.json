@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "fixture": "observables",
+  "controls": [
+    { "label": "Left value", "type": "input", "kind": "input", "risk": "reversible", "selector": "#left-value", "frame": "main", "shadowPath": [] },
+    { "label": "Right value", "type": "input", "kind": "input", "risk": "reversible", "selector": "#right-value", "frame": "main", "shadowPath": [] },
+    { "label": "Calculate total", "type": "button", "kind": "submit", "risk": "reversible", "selector": "#calculate", "frame": "main", "shadowPath": [] },
+    { "label": "Email address", "type": "input", "kind": "input", "risk": "reversible", "selector": "#email", "frame": "main", "shadowPath": [] },
+    { "label": "Validate email", "type": "button", "kind": "submit", "risk": "safe", "selector": "#validate", "frame": "main", "shadowPath": [] }
+  ],
+  "observables": [
+    { "label": "Calculated total", "kind": "value_display", "valueType": "currency", "selector": "#calculated-total", "initialValue": "$0.00", "after": { "action": "Calculate total", "value": "$12.00" }, "frame": "main" },
+    { "label": "Email error", "kind": "validation", "valueType": "text", "selector": "#email-error", "initialValue": "", "after": { "action": "Validate email", "value": "Enter a valid work email address before continuing." }, "frame": "main" },
+    { "label": "Save status", "kind": "live_region", "valueType": "text", "selector": "#save-status", "initialValue": "Ready", "after": { "action": "Calculate total", "value": "Calculation complete" }, "frame": "main" }
+  ],
+  "collections": [],
+  "warnings": []
+}

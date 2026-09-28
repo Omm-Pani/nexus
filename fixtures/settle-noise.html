@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Settled noise regression</title>
+  </head>
+  <body>
+    <main aria-label="Polling application">
+      <h1>Polling application</h1>
+      <button type="button">Ready action</button>
+      <div id="heartbeat" aria-hidden="true"></div>
+    </main>
+    <script>
+      // Models Odoo-style framework bookkeeping plus a harmless background
+      // request. Neither changes the page's actionable semantic surface.
+      setInterval(() => {
+        document.querySelector('#heartbeat').textContent = String(Date.now());
+        void fetch('/fixtures/settle-noise.html', { cache: 'no-store' });
+      }, 300);
+    </script>
+  </body>
+</html>

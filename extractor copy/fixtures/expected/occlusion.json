@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "fixture": "occlusion",
+  "controls": [
+    { "label": "Complete purchase", "type": "button", "kind": "unknown", "risk": "mutating", "selector": "#covered-action", "frame": "main", "shadowPath": [], "expected": { "visible": true, "inViewport": true, "hitTestable": false, "occludedBy": "Cookie preferences" } },
+    { "label": "Dismiss cookie banner", "type": "button", "kind": "close", "risk": "reversible", "selector": "#dismiss-banner", "frame": "main", "shadowPath": [], "expected": { "visible": true, "inViewport": true, "hitTestable": true, "occludedBy": null } }
+  ],
+  "observables": [],
+  "collections": [],
+  "warnings": [
+    { "code": "occluded", "ref": "Complete purchase" }
+  ]
+}

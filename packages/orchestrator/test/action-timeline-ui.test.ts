@@ -1,0 +1,55 @@
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { chromium, type Browser } from 'playwright';
+import { expect, it } from 'vitest';
+import { createOrchestratorServer } from '../src/server.js';
+
+it('shows complete user entries, meaningful hover/click actions, and separate system changes linked to left states', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'nexus-timeline-'));
+  let targetBrowser: Browser;
+  const server = createOrchestratorServer({ managerDependencies: { artifactsRoot: directory, captureDebounceMs: 40, launchBrowser: async () => { targetBrowser = await chromium.launch(); return targetBrowser; } } });
+  const uiBrowser = await chromium.launch();
+  const page = await uiBrowser.newPage({ viewport: { width: 1600, height: 1000 } });
+  page.setDefaultTimeout(6000);
+  const errors: string[] = [];
+  page.on('pageerror', (error) => errors.push(error.message));
+  try {
+    const address = await server.listen(0);
+    await page.goto(address.url);
+    await page.getByRole('textbox', { name: 'Website URL' }).fill(`${address.url}/fixtures/action-timeline.html`);
+    await page.getByRole('button', { name: 'Load & Extract' }).click();
+    await page.getByRole('button', { name: /Initial page state/ }).waitFor();
+    const target = targetBrowser!.contexts()[0]!.pages()[0]!;
+    await target.getByRole('button', { name: 'No change', exact: true }).click();
+    await target.getByLabel('Username', { exact: true }).click();
+    await target.getByLabel('Username', { exact: true }).pressSequentially('standard_', { delay: 15 });
+    await expect.poll(() => page.locator('.activity-entry').filter({ hasText: 'Type Username' }).innerText(), { timeout: 6000 }).toContain('Value: standard_');
+    await target.getByLabel('Username', { exact: true }).pressSequentially('user name', { delay: 15 });
+    await target.getByLabel('Password', { exact: true }).fill('secret_sauce with space');
+    await expect.poll(() => page.locator('.activity-entry').filter({ hasText: 'Type Password' }).innerText(), { timeout: 6000 }).toContain('Value: secret_sauce with space');
+    expect(await page.locator('.activity-step strong').filter({ hasText: /^Type Username$/ }).count()).toBe(1);
+    expect(await page.locator('.activity-entry').filter({ hasText: 'Type Username' }).innerText()).toContain('Value: standard_user name');
+    expect(await page.locator('.activity-step strong').filter({ hasText: /^Click No change$/ }).count()).toBe(0);
+    await target.getByLabel('Help').hover();
+    await expect.poll(() => page.locator('.activity-step strong').filter({ hasText: /^Hover Help$/ }).count(), { timeout: 6000 }).toBeGreaterThan(0);
+    await target.evaluate(() => { document.querySelector('#status')!.textContent = 'System completed'; });
+    await expect.poll(() => page.locator('.activity-step strong').filter({ hasText: /^Page updated$/ }).count(), { timeout: 6000 }).toBeGreaterThan(0);
+    await target.getByRole('button', { name: 'Login', exact: true }).click();
+    await page.locator('.activity-step strong').filter({ hasText: /^Click Login$/ }).waitFor();
+    await page.locator('.activity-step strong').filter({ hasText: /^Navigate to .*semantic-display/ }).waitFor();
+    const usernameStep = page.locator('.activity-entry').filter({ has: page.locator('.activity-step strong', { hasText: /^Type Username$/ }) });
+    await usernameStep.locator('summary').click();
+    expect(await usernameStep.innerText()).toContain('Focus Username');
+    expect(await usernameStep.innerText()).toContain('Unfocus Username');
+    await usernameStep.locator('button').click();
+    expect(await usernameStep.locator('button').getAttribute('aria-pressed')).toBe('true');
+    await page.locator('.state-tab.is-selected .element-label').filter({ hasText: /^Username$/ }).waitFor({ state: 'visible' });
+    expect(target.url()).toContain('/fixtures/semantic-display.html');
+    await page.screenshot({ path: '/tmp/nexus-action-timeline.png', fullPage: true });
+    expect(errors).toEqual([]);
+  } catch (error) {
+    await page.screenshot({ path: '/tmp/nexus-action-timeline-failure.png', fullPage: true });
+    throw error;
+  } finally { await uiBrowser.close(); await server.close(); await rm(directory, { recursive: true, force: true }); }
+});

@@ -1,0 +1,27 @@
+{
+  "name": "nexus-element-extractor",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.15.1",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "pnpm -r --if-present build",
+    "dev": "pnpm start",
+    "dev:ui": "pnpm --filter @nexus/ui dev",
+    "start": "pnpm build && node packages/orchestrator/dist/server.js",
+    "serve": "node packages/orchestrator/dist/server.js",
+    "typecheck": "pnpm -r --if-present typecheck",
+    "test": "pnpm build && vitest run",
+    "nexus": "pnpm --filter @nexus/orchestrator... build && node packages/orchestrator/dist/cli.js",
+    "desktop": "pnpm build && pnpm --filter @nexus/desktop start",
+    "desktop:smoke": "pnpm build && pnpm --filter @nexus/desktop smoke"
+  },
+  "devDependencies": {
+    "@types/node": "^22.16.5",
+    "typescript": "5.8.3",
+    "vitest": "^3.2.4"
+  }
+}

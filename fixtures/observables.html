@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Observable values fixture</title>
+    <style>
+      body { max-width: 42rem; margin: 2rem auto; font: 16px system-ui; }
+      form { display: grid; gap: 0.75rem; margin-bottom: 2rem; padding: 1rem; border: 1px solid #aaa; }
+      [role="alert"] { color: #b91c1c; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Observable values</h1>
+      <form id="calculator">
+        <h2>Calculator</h2>
+        <label for="left-value">Left value</label>
+        <input id="left-value" name="left-value" type="number" value="7" />
+        <label for="right-value">Right value</label>
+        <input id="right-value" name="right-value" type="number" value="5" />
+        <button id="calculate" type="submit">Calculate total</button>
+        <output id="calculated-total" for="left-value right-value">$0.00</output>
+      </form>
+
+      <form id="validation-form" novalidate>
+        <h2>Email validation</h2>
+        <label for="email">Email address</label>
+        <input id="email" name="email" type="email" aria-describedby="email-help" aria-errormessage="email-error" />
+        <p id="email-help">Use a work email address.</p>
+        <p id="email-error" role="alert" hidden></p>
+        <button id="validate" type="submit">Validate email</button>
+      </form>
+
+      <p id="save-status" role="status" aria-live="polite">Ready</p>
+    </main>
+    <script>
+      document.querySelector('#calculator').addEventListener('submit', (event) => {
+        event.preventDefault();
+        const left = Number(document.querySelector('#left-value').value);
+        const right = Number(document.querySelector('#right-value').value);
+        document.querySelector('#calculated-total').textContent = `$${(left + right).toFixed(2)}`;
+        document.querySelector('#save-status').textContent = 'Calculation complete';
+      });
+
+      document.querySelector('#validation-form').addEventListener('submit', (event) => {
+        event.preventDefault();
+        const input = document.querySelector('#email');
+        const error = document.querySelector('#email-error');
+        const valid = input.value.endsWith('@example.com');
+        input.setAttribute('aria-invalid', String(!valid));
+        error.textContent = valid ? '' : 'Enter a valid work email address before continuing.';
+        error.hidden = valid;
+        document.querySelector('#save-status').textContent = valid ? 'Email accepted' : 'Validation failed';
+      });
+    </script>
+  </body>
+</html>

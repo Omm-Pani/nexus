@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Occlusion fixture</title>
+    <style>
+      body { min-height: 900px; margin: 0; font: 16px system-ui; }
+      main { padding: 2rem; }
+      #covered-action { position: absolute; top: 215px; left: calc(50% - 75px); width: 150px; height: 50px; }
+      #cookie-banner { position: fixed; z-index: 100; top: 170px; left: 0; right: 0; height: 140px; padding: 1rem; box-sizing: border-box; background: rgb(30 41 59 / 96%); color: white; }
+      #dismiss-banner { position: absolute; top: 0.75rem; right: 1rem; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Checkout</h1>
+      <button id="covered-action" type="button">Complete purchase</button>
+    </main>
+    <aside id="cookie-banner" role="dialog" aria-label="Cookie preferences">
+      <strong>Cookie preferences</strong>
+      <p>This banner deliberately covers the center of the purchase button.</p>
+      <button id="dismiss-banner" type="button">Dismiss cookie banner</button>
+    </aside>
+    <script>
+      document.querySelector('#dismiss-banner').addEventListener('click', () => {
+        document.querySelector('#cookie-banner').hidden = true;
+      });
+    </script>
+  </body>
+</html>
+
