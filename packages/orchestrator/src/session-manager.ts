@@ -183,6 +183,7 @@ interface ManagedSession {
   suppressAutomaticCapture: boolean;
   /** Increments for every committed main-frame document navigation. */
   documentGeneration: number;
+  pageNames: extractor.PageNames;
   journal: extractor.ObservationJournal;
   closed: boolean;
 }
@@ -633,6 +634,7 @@ export class SessionManager {
           settledDocuments: new WeakMap(),
           suppressAutomaticCapture: true,
           documentGeneration: 0,
+          pageNames: new extractor.PageNames(join(this.#dependencies.artifactsRoot, id)),
           journal: new extractor.ObservationJournal(join(this.#dependencies.artifactsRoot, id),
             (event) => this.#publish(session, event),
             (error) => this.#publish(session, { t: 'extraction.error', stateId: session.currentStateId ?? 'current', message: `Observation persistence failed: ${String(error)}` })),
@@ -672,6 +674,10 @@ export class SessionManager {
         throw error;
       }
     });
+  }
+
+  pageNames(sessionId: string): extractor.PageNames {
+    return this.#session(sessionId).pageNames;
   }
 
   async goto(sessionId: string, url: string): Promise<void> {

@@ -38,7 +38,7 @@ export function nexusBootstrap(): void {
     deepElementCount(): number;
     highlight(items: Array<{
       x: number; y: number; w: number; h: number;
-      label?: string; tone?: string; primary?: boolean;
+      label?: string; tone?: string; primary?: boolean; selector?: string; shadowPath?: string[];
     }>): void;
     clearHighlight(): void;
     extract(options: { framePath: string; maxNodes?: number; maxDepth?: number }): unknown;
@@ -157,14 +157,12 @@ export function nexusBootstrap(): void {
   };
 
   const belongsToInspector = (node: Node): boolean => {
-    const root = node.getRootNode();
-    const element = node instanceof Element
-      ? node
-      : root instanceof ShadowRoot
-        ? root.host
-        : node.parentElement;
-    return element?.hasAttribute(OVERLAY_ATTRIBUTE) === true
-      || element?.closest(`[${OVERLAY_ATTRIBUTE}]`) !== null;
+    let cursor: Node | null = node;
+    while (cursor !== null) {
+      if (cursor instanceof Element && cursor.hasAttribute(OVERLAY_ATTRIBUTE)) return true;
+      cursor = cursor.parentNode ?? (cursor instanceof ShadowRoot ? cursor.host : null);
+    }
+    return false;
   };
 
   const mutationBelongsToInspector = (record: MutationRecord): boolean => {
@@ -785,18 +783,59 @@ export function nexusBootstrap(): void {
 
   let overlayHost: HTMLElement | null = null;
   let overlayRoot: ShadowRoot | null = null;
+  let overlayAnimation: number | null = null;
+  type HighlightItem = {
+    x: number; y: number; w: number; h: number;
+    label?: string; tone?: string; primary?: boolean;
+    selector?: string; shadowPath?: string[];
+  };
+  let highlights: Array<{ item: HighlightItem; element: Element | null; box: HTMLElement; label: HTMLElement | null }> = [];
 
-  /**
-   * Draw highlight boxes inside the page.
-   *
-   * A native browser view is composited above the host application's DOM, so
-   * an overlay drawn by the inspector window cannot appear on top of it. Doing
-   * it in-page also removes the screencast scale factor: these are the exact
-   * viewport rectangles the walk reported, with no coordinate round-trip.
-   */
-  const highlight = (
-    items: Array<{ x: number; y: number; w: number; h: number; label?: string; tone?: string; primary?: boolean }>,
-  ): void => {
+  const resolveHighlight = (item: HighlightItem): Element | null => {
+    if (!item.selector) return null;
+    try {
+      let root: Document | ShadowRoot = document;
+      for (const selector of item.shadowPath ?? []) {
+        const host: Element | null = root.querySelector(selector);
+        const shadow: ShadowRoot | null = host === null ? null : shadowRoots.get(host) ?? host.shadowRoot;
+        if (shadow === null) return null;
+        root = shadow;
+      }
+      return root.querySelector(item.selector);
+    } catch { return null; }
+  };
+
+  // Read live rectangles every frame, including scroll, resizing and animated
+  // layout changes. Bind to the actual node so a removed/replaced control never
+  // leaves a box on another element that happens to inherit its old selector.
+  const positionHighlights = (): void => {
+    for (const { element, box, label } of highlights) {
+      const style = element?.isConnected ? getComputedStyle(element) : null;
+      const rect = element?.isConnected ? element.getBoundingClientRect() : null;
+      const visible = rect !== null && rect.width > 0 && rect.height > 0
+        && style?.visibility !== 'hidden' && style?.visibility !== 'collapse';
+      box.hidden = !visible;
+      if (label !== null) label.hidden = !visible;
+      if (!visible || rect === null) continue;
+      box.style.left = `${rect.x}px`; box.style.top = `${rect.y}px`;
+      box.style.width = `${rect.width}px`; box.style.height = `${rect.height}px`;
+      if (label !== null) {
+        label.style.left = `${rect.x}px`; label.style.top = `${Math.max(0, rect.y - 16)}px`;
+      }
+    }
+    overlayAnimation = highlights.length ? requestAnimationFrame(positionHighlights) : null;
+  };
+
+  const clearHighlight = (): void => {
+    if (overlayAnimation !== null) cancelAnimationFrame(overlayAnimation);
+    overlayAnimation = null;
+    highlights = [];
+    if (overlayRoot !== null) overlayRoot.replaceChildren();
+  };
+
+  const highlight = (items: HighlightItem[]): void => {
+    clearHighlight();
+    if (items.length === 0) return;
     if (overlayHost === null || !overlayHost.isConnected) {
       overlayHost = document.createElement('div');
       overlayHost.setAttribute(OVERLAY_ATTRIBUTE, '');
@@ -805,34 +844,28 @@ export function nexusBootstrap(): void {
       (document.body ?? document.documentElement)?.appendChild(overlayHost);
     }
     if (overlayRoot === null) return;
-    const parts: string[] = [
-      '<style>'
-      + ':host{all:initial}'
+    const css = document.createElement('style');
+    css.textContent = ':host{all:initial} [hidden]{display:none!important}'
       + 'i{position:fixed;box-sizing:border-box;border:1px solid var(--tone,#2563eb);'
-      + 'background:color-mix(in srgb, var(--tone,#2563eb) 8%, transparent);border-radius:2px;display:block}'
-      + 'i.p{border-width:2px;background:color-mix(in srgb, var(--tone,#2563eb) 18%, transparent)}'
-      + 'b{position:fixed;font:600 10px/1.4 ui-sans-serif,system-ui,sans-serif;'
-      + 'color:#fff;background:var(--tone,#2563eb);padding:1px 5px;border-radius:3px;white-space:nowrap}'
-      + '</style>',
-    ];
+      + 'background:color-mix(in srgb,var(--tone,#2563eb) 8%,transparent);border-radius:2px;display:block}'
+      + 'i.p{border-width:2px;background:color-mix(in srgb,var(--tone,#2563eb) 18%,transparent)}'
+      + 'b{position:fixed;font:600 10px/1.4 ui-sans-serif,system-ui,sans-serif;color:#fff;'
+      + 'background:var(--tone,#2563eb);padding:1px 5px;border-radius:3px;white-space:nowrap}';
+    overlayRoot.append(css);
     for (const item of items.slice(0, 400)) {
-      const tone = (item.tone ?? '#2563eb').replace(/[^#a-zA-Z0-9(),.% -]/gu, '');
-      const style = `--tone:${tone};left:${item.x}px;top:${item.y}px;`
-        + `width:${Math.max(2, item.w)}px;height:${Math.max(2, item.h)}px`;
-      parts.push(`<i class="${item.primary === true ? 'p' : ''}" style="${style}"></i>`);
-      if (item.label !== undefined && item.label !== '') {
-        const text = item.label
-          .replace(/&/gu, '&amp;').replace(/</gu, '&lt;').replace(/>/gu, '&gt;')
-          .slice(0, 80);
-        const labelTop = Math.max(0, item.y - 16);
-        parts.push(`<b style="--tone:${tone};left:${item.x}px;top:${labelTop}px">${text}</b>`);
+      const box = document.createElement('i');
+      if (item.primary) box.className = 'p';
+      box.style.setProperty('--tone', item.tone ?? '#2563eb');
+      const label = item.label ? document.createElement('b') : null;
+      overlayRoot.append(box);
+      if (label !== null) {
+        label.textContent = (item.label ?? '').slice(0, 80);
+        label.style.setProperty('--tone', item.tone ?? '#2563eb');
+        overlayRoot.append(label);
       }
+      highlights.push({ item, element: resolveHighlight(item), box, label });
     }
-    overlayRoot.innerHTML = parts.join('');
-  };
-
-  const clearHighlight = (): void => {
-    if (overlayRoot !== null) overlayRoot.innerHTML = '';
+    positionHighlights();
   };
 
   /**

@@ -14,6 +14,8 @@ export interface NexusTransport {
   createSession(url: string): Promise<string>;
   goto(sessionId: string, url: string): Promise<void>;
   resetHistory(sessionId: string): Promise<Extract<OrchestratorEvent, { t: 'history.reset' }>>;
+  pageNames(sessionId: string): Promise<Record<string, string>>;
+  renamePage(sessionId: string, url: string, name: string | null): Promise<Record<string, string>>;
   states(sessionId: string): Promise<unknown>;
   state(sessionId: string, stateId: string): Promise<StateArtifact>;
   sendInput(sessionId: string, payload: unknown): Promise<void>;
@@ -41,6 +43,9 @@ export interface HighlightBox {
   label?: string;
   tone?: string;
   primary?: boolean;
+  frame?: string;
+  selector?: string;
+  shadowPath?: string[];
 }
 
 export interface DesktopBridge {
@@ -115,6 +120,16 @@ export class HttpTransport implements NexusTransport {
     });
   }
 
+  async pageNames(sessionId: string): Promise<Record<string, string>> {
+    return await this.#request(`/session/${encodeURIComponent(sessionId)}/page-names`) as Record<string, string>;
+  }
+
+  async renamePage(sessionId: string, url: string, name: string | null): Promise<Record<string, string>> {
+    return await this.#request(`/session/${encodeURIComponent(sessionId)}/page-names`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ url, name }),
+    }) as Record<string, string>;
+  }
+
   async states(sessionId: string): Promise<unknown> {
     return this.#request(`/session/${encodeURIComponent(sessionId)}/states`);
   }
@@ -176,6 +191,14 @@ export class DesktopTransport implements NexusTransport {
 
   async resetHistory(sessionId: string): Promise<Extract<OrchestratorEvent, { t: 'history.reset' }>> {
     return await this.#bridge.invoke('session.resetHistory', { sessionId }) as Extract<OrchestratorEvent, { t: 'history.reset' }>;
+  }
+
+  async pageNames(sessionId: string): Promise<Record<string, string>> {
+    return await this.#bridge.invoke('session.pageNames', { sessionId }) as Record<string, string>;
+  }
+
+  async renamePage(sessionId: string, url: string, name: string | null): Promise<Record<string, string>> {
+    return await this.#bridge.invoke('session.renamePage', { sessionId, url, name }) as Record<string, string>;
   }
 
   async states(sessionId: string): Promise<unknown> {

@@ -1,3 +1,5 @@
+import { RecordingNameDialog, RecordingsPage, recordingRequest, type Recording, type SavedRecording } from './recordings.js';
+import { buildInteractionTimeline, timelineStateIds } from './interaction-timeline.js';
 import { ActivityPanel } from './activity-panel.js';
 import {
   type CSSProperties,
@@ -200,14 +202,9 @@ function isStateArtifact(value: unknown): value is StateArtifact {
 function stateLabel(state: StateRecord, index: number): string {
   const hasKind = (kind: Group['kind']) => state.groups.some((group) => group.kind === kind && !group.conditional);
   if (state.status === 'error') return 'Extraction failed';
-  if (state.observables.some((observable) => observable.kind === 'validation' && observable.currentValue !== '')) {
-    return 'Validation error';
-  }
-  if (hasKind('dialog')) return 'Dialog open';
-  if (hasKind('menu')) return 'Menu open';
-  if (index === 0) return 'Initial';
-  if (state.trigger !== null && !/^(?:mouse|key|wheel)/iu.test(state.trigger)) return state.trigger;
-  return `State ${index + 1}`;
+  if (index === 0) return 'Initial state';
+  const context = hasKind('dialog') ? ' · Dialog open' : hasKind('menu') ? ' · Menu open' : '';
+  return `State ${index + 1}${context}`;
 }
 
 type PageGroup = ExactUrlPage<StateRecord>;
@@ -1011,7 +1008,7 @@ function StateTab({ state, baseline, name, expanded, selected, onToggle, onHover
  * One card per address. States of the same page — a menu opening, validation
  * failing — nest inside it rather than appearing as separate pages.
  */
-function PageCard({ page, currentStateId, expandedStateId, selectedStateId, onSelect, onHoverAction, onHoverObservable, onHoverTarget }: { page: PageGroup; currentStateId: string | null; expandedStateId: string | null; selectedStateId: string | null; onSelect: (stateId: string) => void; onHoverAction: (action: Action | null) => void; onHoverObservable: (observable: Observable | null) => void; onHoverTarget: (target: HoverTarget | null) => void }) {
+function PageCard({ namesReady, customName, onRename, page, currentStateId, expandedStateId, selectedStateId, onSelect, onHoverAction, onHoverObservable, onHoverTarget }: { namesReady: boolean; customName: string | undefined; onRename: (url: string, name: string | null) => Promise<void>; page: PageGroup; currentStateId: string | null; expandedStateId: string | null; selectedStateId: string | null; onSelect: (stateId: string) => void; onHoverAction: (action: Action | null) => void; onHoverObservable: (observable: Observable | null) => void; onHoverTarget: (target: HoverTarget | null) => void }) {
   const containsSelection = page.states.some((state) => state.stateId === selectedStateId);
   const containsCurrent = pageContainsCurrentState(page.states.map(({ stateId }) => stateId), currentStateId);
   const [open, setOpen] = useState(containsCurrent || (currentStateId === null && containsSelection));
@@ -1019,14 +1016,38 @@ function PageCard({ page, currentStateId, expandedStateId, selectedStateId, onSe
     if (currentStateId !== null) setOpen(containsCurrent || containsSelection);
   }, [containsCurrent, containsSelection, currentStateId]);
   const single = page.states.length === 1;
-  const pageTitle = page.states.find((state) => state.stateId === selectedStateId)?.title || page.states.at(-1)?.title || labelForUrl(page.url);
+  const automaticTitle = page.states.find((state) => state.title.trim() !== '')?.title || labelForUrl(page.url);
+  const pageTitle = customName ?? automaticTitle;
+  const [editing, setEditing] = useState(false);
+  const [draftName, setDraftName] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [renameError, setRenameError] = useState<string | null>(null);
+  const saveName = async (name: string | null) => {
+    setSaving(true); setRenameError(null);
+    try {
+      await onRename(page.url, name);
+      setEditing(false);
+    } catch (error) {
+      setRenameError(error instanceof Error ? error.message : 'Could not save the page name.');
+    } finally { setSaving(false); }
+  };
   return (
     <section className={`page-card${containsCurrent ? ' is-current' : ''}${containsSelection ? ' is-selected' : ''}`}>
-      <button className="page-summary" type="button" onClick={() => setOpen((value) => !value)} aria-expanded={open}>
+      <div className="page-summary-row"><button className="page-summary" type="button" onClick={() => setOpen((value) => !value)} aria-expanded={open}>
         <Chevron open={open} />
         <span className="page-heading"><strong>{pageTitle}</strong><span className="state-url data-text" title={page.url}>{shortUrl(page.url)}</span></span>
         <span className="group-count data-text">{page.states.length} state{single ? '' : 's'}</span>
       </button>
+      <button type="button" className="page-rename-button" disabled={!namesReady || saving} aria-label={`Rename ${pageTitle}`} onClick={() => { setDraftName(pageTitle); setRenameError(null); setEditing(true); }}>Rename</button></div>
+      {editing && <form className="page-name-editor" onSubmit={(event) => { event.preventDefault(); void saveName(draftName.trim()); }}>
+        <label>Page group name<input autoFocus aria-label="Page group name" value={draftName} maxLength={120} disabled={saving} onChange={(event) => setDraftName(event.target.value)} onKeyDown={(event) => { if (event.key === 'Escape' && !saving) setEditing(false); }} /></label>
+        <div className="page-name-actions">
+          <button type="submit" disabled={saving || draftName.trim().length === 0}>{saving ? 'Saving…' : 'Save'}</button>
+          <button type="button" disabled={saving} onClick={() => setEditing(false)}>Cancel</button>
+          {customName !== undefined && <button type="button" disabled={saving} onClick={() => void saveName(null)}>Use page title</button>}
+        </div>
+        {renameError !== null && <p role="alert">{renameError}</p>}
+      </form>}
       {open && <div className="page-states">
         {page.states.map((state, index) => {
           const parent = state.parentStateId === null ? undefined : page.states.find((candidate) => candidate.stateId === state.parentStateId);
@@ -1038,14 +1059,45 @@ function PageCard({ page, currentStateId, expandedStateId, selectedStateId, onSe
   );
 }
 
-function DiscoveredPanel({ states, currentStateId, expandedStateId, selectedStateId, captureProgress, onSelect, onHoverAction, onHoverObservable, onHoverTarget }: { states: StateRecord[]; currentStateId: string | null; expandedStateId: string | null; selectedStateId: string | null; captureProgress: CaptureProgress | null; onSelect: (stateId: string) => void; onHoverAction: (action: Action | null) => void; onHoverObservable: (observable: Observable | null) => void; onHoverTarget: (target: HoverTarget | null) => void }) {
+function DiscoveredPanel({ sessionId, states, currentStateId, expandedStateId, selectedStateId, captureProgress, onSelect, onHoverAction, onHoverObservable, onHoverTarget }: { sessionId: string | null; states: StateRecord[]; currentStateId: string | null; expandedStateId: string | null; selectedStateId: string | null; captureProgress: CaptureProgress | null; onSelect: (stateId: string) => void; onHoverAction: (action: Action | null) => void; onHoverObservable: (observable: Observable | null) => void; onHoverTarget: (target: HoverTarget | null) => void }) {
+  const [pageNames, setPageNames] = useState<Record<string, string>>({});
+  const [namesReady, setNamesReady] = useState(false);
+  const [namesError, setNamesError] = useState<string | null>(null);
+  const activeSessionRef = useRef(sessionId);
+  activeSessionRef.current = sessionId;
+  useEffect(() => {
+    let cancelled = false;
+    setPageNames({}); setNamesError(null); setNamesReady(false);
+    if (sessionId !== null) {
+      void transport.pageNames(sessionId).then((names) => {
+        if (!cancelled) setPageNames(names);
+      }).catch(() => { if (!cancelled) setNamesError('Saved page names could not be loaded.'); })
+        .finally(() => { if (!cancelled) setNamesReady(true); });
+    }
+    return () => { cancelled = true; };
+  }, [sessionId]);
+  const renamePage = async (url: string, name: string | null) => {
+    if (sessionId === null) throw new Error('No session is active.');
+    const names = await transport.renamePage(sessionId, url, name);
+    if (activeSessionRef.current === sessionId) {
+      setPageNames((current) => {
+        const next = { ...current };
+        const key = exactPageKey(url);
+        if (names[key] === undefined) delete next[key];
+        else next[key] = names[key];
+        return next;
+      });
+      setNamesError(null);
+    }
+  };
   return <aside className="panel discovered-panel" aria-label="Discovered elements">
     <header className="panel-header discovered-header"><h2>Discovered Elements</h2><p>Controls, content, and collections by page section</p></header>
     <div className="type-legend" aria-label="Element type legend">{TYPE_LABELS.map((type) => <span key={type}><TypeDot type={type} />{type}</span>)}</div>
+    {namesError !== null && <p className="page-names-error" role="alert">{namesError}</p>}
     <div className="state-list">
       {captureProgress !== null && <div className={`capture-banner${captureProgress.errorMessage !== null ? ' is-error' : ''}`} role={captureProgress.errorMessage !== null ? 'alert' : undefined}><div>{captureProgress.errorMessage === null ? <span className="activity-dot" /> : <span className="capture-error-icon">!</span>}<strong>{captureProgress.errorMessage === null ? 'Extracting current page' : 'Extraction failed'}</strong></div>{captureProgress.errorMessage === null ? <PhaseProgress phase={captureProgress.phase} /> : <p>{captureProgress.errorMessage}</p>}</div>}
       {states.length === 0 && captureProgress === null && <div className="panel-empty"><span className="empty-glyph" aria-hidden="true">⌁</span><strong>Enter a URL to begin extraction.</strong><span>Discovered controls and values will appear here as each group completes.</span></div>}
-      {groupStatesByExactUrl(states).map((page) => <PageCard key={page.key} page={page} currentStateId={currentStateId} expandedStateId={expandedStateId} selectedStateId={selectedStateId} onSelect={onSelect} onHoverAction={onHoverAction} onHoverObservable={onHoverObservable} onHoverTarget={onHoverTarget} />)}
+      {groupStatesByExactUrl(states).map((page) => <PageCard key={page.key} namesReady={namesReady} customName={pageNames[page.key]} onRename={renamePage} page={page} currentStateId={currentStateId} expandedStateId={expandedStateId} selectedStateId={selectedStateId} onSelect={onSelect} onHoverAction={onHoverAction} onHoverObservable={onHoverObservable} onHoverTarget={onHoverTarget} />)}
     </div>
   </aside>;
 }
@@ -1167,7 +1219,17 @@ function BrowserArena({ sessionId, url, frame, connection, activeState, hovered,
   </section>;
 }
 
+function SavedRecordingView({ saved }: { saved: SavedRecording }) {
+  const records = useMemo(() => saved.artifacts.map(recordFromArtifact), [saved.artifacts]);
+  const [selected, setSelected] = useState<string | null>(records[0]?.stateId ?? null);
+  return <DiscoveredPanel key={saved.recording.id} sessionId={saved.recording.id} states={records} currentStateId={null} expandedStateId={selected} selectedStateId={selected} captureProgress={null} onSelect={(id) => setSelected((current) => current === id ? null : id)} onHoverAction={() => undefined} onHoverObservable={() => undefined} onHoverTarget={() => undefined} />;
+}
+
 export function App() {
+  const [screen, setScreen] = useState<'inspector' | 'recordings'>('inspector');
+  const [recording, setRecording] = useState<Recording | null>(null);
+  const [recordingUrl, setRecordingUrl] = useState<string | null>(null);
+  const [stopping, setStopping] = useState(false);
   const [draftUrl, setDraftUrl] = useState('');
   const [confirmedUrl, setConfirmedUrl] = useState('');
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -1393,6 +1455,11 @@ export function App() {
   const handleLoad = async (event: FormEvent) => {
     event.preventDefault(); let requestedUrl = draftUrl.trim(); if (requestedUrl.length === 0) { setAppError('Enter a website URL to begin extraction.'); return; } if (!/^https?:\/\//i.test(requestedUrl)) requestedUrl = `https://${requestedUrl}`;
     try { const parsed = new URL(requestedUrl); if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error(); requestedUrl = parsed.href; } catch { setAppError('Enter a valid HTTP or HTTPS URL.'); return; }
+    if (transport.mode === 'desktop') {
+      if (recording !== null) { setAppError('Stop the current recording before starting another.'); return; }
+      setRecordingUrl(requestedUrl);
+      return;
+    }
     const restoreUrl = confirmedUrl;
     setDraftUrl(requestedUrl); setAppError(null); setLoading(true); setCaptureProgress({ stateId: 'pending', url: requestedUrl, phase: 'navigating', errorMessage: null });
     try {
@@ -1405,6 +1472,38 @@ export function App() {
       setLoading(false); setConfirmedUrl(restoreUrl); setDraftUrl(restoreUrl || requestedUrl); setCaptureProgress({ stateId: 'pending', url: requestedUrl, phase: 'navigating', errorMessage: message }); setAppError(message);
     }
   };
+
+  const startRecording = async (name: string) => {
+    if (recordingUrl === null) return;
+    const created = await recordingRequest<Recording>('recordings.start', { url: recordingUrl, name });
+    historyEpochRef.current += 1;
+    activityLogRef.current = []; activityKeysRef.current = new Set();
+    setActivity([]); setStates([]); setCurrentStateId(null); setSelectedStateId(null); setExpandedStateId(null);
+    currentStateRef.current = null; setHovered(null); setAppError(null);
+    setRecording(created); setSessionId(created.id); setConfirmedUrl(recordingUrl); setDraftUrl(recordingUrl);
+    setLoading(true); setCaptureProgress({ stateId: 'pending', url: recordingUrl, phase: 'navigating', errorMessage: null });
+    setRecordingUrl(null);
+  };
+  const stopRecording = async () => {
+    setStopping(true); setAppError(null);
+    try {
+      await recordingRequest<Recording>('recordings.stop');
+      setRecording(null); setLoading(false); setCaptureProgress(null); setScreen('recordings');
+    } catch (error) { setAppError(error instanceof Error ? error.message : 'Could not save recording. Try stopping again.'); }
+    finally { setStopping(false); }
+  };
+
+  useEffect(() => {
+    if (transport.mode !== 'desktop') return;
+    let cancelled = false;
+    void recordingRequest<Recording[]>('recordings.list').then((items) => {
+      const active = items.find((item) => item.status === 'recording');
+      if (!cancelled && active) {
+        setRecording(active); setSessionId(active.id); setDraftUrl(active.url); setConfirmedUrl(active.url);
+      }
+    }).catch(() => undefined);
+    return () => { cancelled = true; };
+  }, []);
 
   const handleResetHistory = async () => {
     const activeSessionId = sessionRef.current;
@@ -1435,6 +1534,13 @@ export function App() {
   }, []);
 
   const selectState = (stateId: string) => { setSelectedStateId(stateId); setExpandedStateId((current) => current === stateId ? null : stateId); };
+  const timeline = useMemo(() => buildInteractionTimeline(activity, states), [activity, states]);
+  const displayedStates = useMemo(() => {
+    if (timeline.length === 0) return states;
+    const retained = timelineStateIds(timeline, currentStateId);
+    if (selectedStateId !== null) retained.add(selectedStateId);
+    return states.filter((state) => retained.has(state.stateId));
+  }, [timeline, states, currentStateId, selectedStateId]);
   const arenaState = states.find((state) => state.stateId === currentStateId) ?? null;
   const resolvedHovered = useMemo(
     () => hovered === null ? null : resolveHoverTarget(hovered, arenaState),
@@ -1457,18 +1563,30 @@ export function App() {
     if (overlayEnabled) {
       for (const action of (arenaState?.actions ?? []).slice(0, 300)) {
         if (!action.visible) continue;
-        boxes.push({ ...action.rect, tone: TYPE_TONES[action.type] });
+        const selector = action.locators.find((locator) => locator.kind === 'structural')?.value;
+        if (selector !== undefined) boxes.push({ ...action.rect, frame: action.frame, selector, shadowPath: action.shadowPath, tone: TYPE_TONES[action.type] });
       }
     }
     if (resolvedHovered !== null) {
-      boxes.push({ ...resolvedHovered.rect, label: resolvedHovered.label, tone: TYPE_TONES[resolvedHovered.type], primary: true });
+      const source = resolvedHovered.sourceKey;
+      const action = source.kind === 'action' ? arenaState?.actions.find((item) => item.stableId === source.stableId) : undefined;
+      const selector = action?.locators.find((locator) => locator.kind === 'structural')?.value;
+      const element = arenaState?.dom?.flatMap((snapshot) => snapshot.elements).find((item) =>
+        item.visible && (['x', 'y', 'w', 'h'] as const).every((axis) => Math.abs(item.rect[axis] - resolvedHovered.rect[axis]) < 0.5));
+      const target = selector !== undefined && action !== undefined
+        ? { selector, frame: action.frame, shadowPath: action.shadowPath }
+        : element === undefined ? null : { selector: element.selector, frame: element.frame, shadowPath: element.shadowPath };
+      if (target !== null) boxes.push({ ...resolvedHovered.rect, ...target, label: resolvedHovered.label, tone: TYPE_TONES[resolvedHovered.type], primary: true });
     }
     void transport.highlight(sessionId, boxes).catch(() => undefined);
   }, [arenaState, currentStateId, overlayEnabled, resolvedHovered, selectedStateId, sessionId]);
   const displayUrl = confirmedUrl || arenaState?.url || '';
+  if (screen === 'recordings') return <RecordingsPage activeRecordingId={recording?.id ?? null} stopping={stopping} recordingError={appError} onStop={() => void stopRecording()} onBack={() => setScreen('inspector')} renderDetails={(saved) => <SavedRecordingView key={saved.recording.id} saved={saved} />} />;
   return <main className="app-shell">
-    <form className="app-header" onSubmit={handleLoad}><div className="brand"><span className="brand-mark" aria-hidden="true">N</span><span><strong>Nexus</strong><small>DOM Extractor</small></span></div><label className="url-field"><span className="globe" aria-hidden="true">◎</span><span className="sr-only">Website URL</span><input type="text" inputMode="url" value={draftUrl} onChange={(event) => setDraftUrl(event.target.value)} placeholder="https://www.saucedemo.com/" autoComplete="url" spellCheck={false} /></label><div className="header-actions"><button className="reset-history-button" type="button" onClick={() => void handleResetHistory()} disabled={sessionId === null || loading || resettingHistory} title="Clear both histories and use the current page as the initial state, without reloading"><span aria-hidden="true">↺</span>{resettingHistory ? 'Resetting…' : 'Reset history'}</button><button className="load-button" type="submit" disabled={loading || resettingHistory || draftUrl.trim().length === 0}><span className={loading ? 'button-spinner' : 'refresh-icon'} aria-hidden="true" />{loading ? 'Extracting…' : 'Load & Extract'}</button></div></form>
+    <form className="app-header" onSubmit={handleLoad}><div className="brand"><span className="brand-mark" aria-hidden="true">N</span><span><strong>Nexus</strong><small>DOM Extractor</small></span></div><label className="url-field"><span className="globe" aria-hidden="true">◎</span><span className="sr-only">Website URL</span><input type="text" inputMode="url" value={draftUrl} onChange={(event) => setDraftUrl(event.target.value)} placeholder="https://www.saucedemo.com/" autoComplete="url" spellCheck={false} /></label><div className="header-actions">{transport.mode === 'desktop' && <button className="reset-history-button" type="button" onClick={() => setScreen('recordings')} disabled={stopping}>Recordings</button>}{recording !== null && <button className="stop-recording-button" type="button" onClick={() => void stopRecording()} disabled={stopping}>{stopping ? 'Saving…' : 'Stop recording'}</button>}<button className="reset-history-button" type="button" onClick={() => void handleResetHistory()} disabled={sessionId === null || loading || resettingHistory || (transport.mode === 'desktop' && recording === null)} title="Clear both histories and use the current page as the initial state, without reloading"><span aria-hidden="true">↺</span>{resettingHistory ? 'Resetting…' : 'Reset history'}</button><button className="load-button" type="submit" disabled={loading || stopping || recording !== null || resettingHistory || draftUrl.trim().length === 0}><span className={loading ? 'button-spinner' : 'refresh-icon'} aria-hidden="true" />{loading ? 'Extracting…' : 'Load & Extract'}</button></div></form>
+    {recording !== null && <div className="recording-status" role="status"><span />Recording: {recording.name}</div>}
+    {recordingUrl !== null && <RecordingNameDialog onCancel={() => setRecordingUrl(null)} onStart={startRecording} />}
     {appError !== null && <div className="app-alert" role="alert"><strong>Extraction failed</strong><span>{appError}</span><button type="button" onClick={() => setAppError(null)} aria-label="Dismiss error">×</button></div>}
-    <div className="workspace"><DiscoveredPanel states={states} currentStateId={currentStateId} expandedStateId={expandedStateId} selectedStateId={selectedStateId} captureProgress={captureProgress} onSelect={selectState} onHoverAction={(action) => setHovered(action === null || selectedStateId !== currentStateId ? null : targetForAction(action))} onHoverObservable={(observable) => setHovered(observable === null || selectedStateId !== currentStateId ? null : targetForObservable(observable))} onHoverTarget={(target) => setHovered(target === null || selectedStateId !== currentStateId ? null : target)} /><BrowserArena sessionId={sessionId} url={displayUrl} frame={frame} connection={connection} activeState={arenaState} hovered={resolvedHovered} overlayEnabled={overlayEnabled} onOverlayChange={setOverlayEnabled} onInput={sendInput} inputError={inputError} /><ActivityPanel events={activity} states={states} selectedStateId={selectedStateId} onSelectState={(stateId) => { setSelectedStateId(stateId); setExpandedStateId(stateId); }} /></div>
+    <div className="workspace"><DiscoveredPanel key={sessionId ?? "no-session"} sessionId={sessionId} states={displayedStates} currentStateId={currentStateId} expandedStateId={expandedStateId} selectedStateId={selectedStateId} captureProgress={captureProgress} onSelect={selectState} onHoverAction={(action) => setHovered(action === null || selectedStateId !== currentStateId ? null : targetForAction(action))} onHoverObservable={(observable) => setHovered(observable === null || selectedStateId !== currentStateId ? null : targetForObservable(observable))} onHoverTarget={(target) => setHovered(target === null || selectedStateId !== currentStateId ? null : target)} />{recordingUrl === null ? <BrowserArena sessionId={sessionId} url={displayUrl} frame={frame} connection={connection} activeState={arenaState} hovered={resolvedHovered} overlayEnabled={overlayEnabled} onOverlayChange={setOverlayEnabled} onInput={sendInput} inputError={inputError} /> : <section className="arena-panel" />}<ActivityPanel steps={timeline} selectedStateId={selectedStateId} onSelectState={(stateId) => { setSelectedStateId(stateId); setExpandedStateId(stateId); }} /></div>
   </main>;
 }

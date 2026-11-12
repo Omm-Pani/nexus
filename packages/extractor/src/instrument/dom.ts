@@ -21,8 +21,13 @@ export function domBootstrap(): void {
   const seenEvents = new WeakSet<Event>();
   const eventTargets = new WeakMap<Event, EventTarget>();
   const causes = new WeakMap<Event, string>();
+  const origins = new WeakMap<Event, 'user' | 'system'>();
+  const focusedByHost = new WeakMap<Element, Element>();
+  let programmaticFocus = 0;
+  let focusGesture: { time: number; target: Element | null; keyboard: boolean } | undefined;
   let nextCause = 0;
   let activeCause: string | undefined;
+  let activeUserEvent: Event | undefined;
   let nextId = 0;
   let sequence = 0;
   let pending: DomObservation[] = [];
@@ -105,7 +110,7 @@ export function domBootstrap(): void {
     } catch { pending.unshift(...batch); }
   };
   const record = (entry: Omit<DomObservation, 'documentId' | 'sequence' | 'timestamp' | 'url'>): void => {
-    pending.push({ ...(activeCause === undefined ? {} : { causeId: activeCause }), ...entry, documentId, sequence: ++sequence, timestamp: new Date().toISOString(), url: location.href });
+    pending.push({ ...(activeCause === undefined || entry.kind === 'interaction' ? {} : { causeId: activeCause }), ...entry, documentId, sequence: ++sequence, timestamp: new Date().toISOString(), url: location.href });
     // Explicitly record a coverage gap if an unattached consumer cannot keep up.
     if (pending.length > 20_000) {
       const dropped = pending.splice(0, 10_000);
@@ -131,15 +136,49 @@ export function domBootstrap(): void {
   ];
   const onEvent = (event: Event): void => {
     if (seenEvents.has(event)) return;
-    if (event.isTrusted && /^(click|dblclick|auxclick|contextmenu|pointerdown|pointerover|pointermove|pointerout|keydown|input|change|focusin|focusout|drop|scroll|wheel)$/.test(event.type)) {
+    let originalTarget = event.composedPath()[0] ?? event.target;
+    if (/^(focus|blur|focusin|focusout)$/.test(event.type)) {
+      // Native dispatch can run a microtask checkpoint before the inner closed
+      // root listener. Resolve its focused leaf before that outer flush.
+      while (originalTarget instanceof Element) {
+        const host = originalTarget;
+        const shadow = shadowFor(host);
+        const leaf = shadow?.activeElement ?? (/^(blur|focusout)$/.test(event.type) ? focusedByHost.get(host) : null);
+        if (!leaf) break;
+        focusedByHost.set(host, leaf);
+        originalTarget = leaf;
+      }
+    }
+    if (event.isTrusted && (event.type === 'pointerdown' || (event.type === 'keydown' && (event as KeyboardEvent).key === 'Tab'))) {
+      focusGesture = { time: event.timeStamp, target: originalTarget instanceof Element ? originalTarget : null, keyboard: event.type === 'keydown' };
+    }
+    if (!origins.has(event) || /^(focus|blur|focusin|focusout)$/.test(event.type)) {
+      let user = event.isTrusted;
+      if (/^(focus|blur|focusin|focusout)$/.test(event.type)) {
+        const recent = focusGesture !== undefined && event.timeStamp - focusGesture.time < 1000;
+        const target = originalTarget instanceof Element ? originalTarget : null;
+        const gestureTarget = focusGesture?.target;
+        let matches = focusGesture?.keyboard || gestureTarget === target || gestureTarget?.closest('label')?.control === target;
+        let cursor = target;
+        while (!matches && cursor?.getRootNode() instanceof ShadowRoot) {
+          cursor = (cursor.getRootNode() as ShadowRoot).host;
+          matches = gestureTarget === cursor;
+        }
+        user = user && programmaticFocus === 0 && recent && (/^(blur|focusout)$/.test(event.type) || !!matches);
+      }
+      origins.set(event, user ? 'user' : 'system');
+    }
+    if (origins.get(event) === 'system' && activeCause !== undefined && activeUserEvent && activeUserEvent.eventPhase !== Event.NONE) causes.set(event, activeCause);
+    if (origins.get(event) === 'user' && /^(click|dblclick|auxclick|contextmenu|pointerdown|pointerover|pointermove|pointerout|keydown|input|change|focusin|focusout|drop|scroll|wheel)$/.test(event.type)) {
       let cause = causes.get(event);
       if (cause === undefined) { cause = `${documentId}:action${++nextCause}`; causes.set(event, cause); }
       activeCause = cause;
+      activeUserEvent = event;
       const ownCause = cause;
       // Scope attribution to the event task; later independent updates are system steps.
       window.setTimeout(() => { if (activeCause === ownCause) activeCause = undefined; }, 0);
     }
-    const observedTarget = event.composedPath()[0] ?? event.target;
+    const observedTarget = originalTarget;
     if (observedTarget !== null) eventTargets.set(event, observedTarget);
     // Closed-root listeners see the original target before the outer document is processed.
     queueMicrotask(() => {
@@ -149,7 +188,7 @@ export function domBootstrap(): void {
       if (target instanceof Node && ignored(target)) return;
       const original = target instanceof Element ? target : target instanceof Node ? target.parentElement : null;
       const element = original?.closest('input, textarea, select, button, a[href], [role="button"], [role="textbox"], [contenteditable="true"], [contenteditable=""]') ?? original;
-      const detail: Record<string, string | number | boolean | null> = { trusted: event.isTrusted };
+      const detail: Record<string, string | number | boolean | null> = { trusted: event.isTrusted, origin: origins.get(event) ?? 'system' };
       if (element !== null) Object.assign(detail, state(element), { label: label(element), tag: element.localName, inputType: element.getAttribute('type') ?? '', editable: editable(element) });
       for (const name of ['key', 'code', 'button', 'buttons', 'clientX', 'clientY', 'deltaX', 'deltaY', 'inputType', 'data', 'altKey', 'ctrlKey', 'metaKey', 'shiftKey']) {
         const value = (event as unknown as Record<string, unknown>)[name];
@@ -229,6 +268,21 @@ export function domBootstrap(): void {
     return root;
   };
   Object.defineProperty(Element.prototype.attachShadow, 'toString', { configurable: true, value: attach.toString.bind(attach) });
+  // focus()/blur() produce trusted browser events even when called by app code.
+  // Preserve their origin at dispatch time, before the deferred event flush.
+  for (const prototype of [HTMLElement.prototype, SVGElement.prototype]) {
+    for (const name of ['focus', 'blur'] as const) {
+      const descriptor = Object.getOwnPropertyDescriptor(prototype, name);
+      if (typeof descriptor?.value !== 'function' || !descriptor.configurable) continue;
+      const original = descriptor.value as (...args: unknown[]) => unknown;
+      const wrapped = function(this: Element, ...args: unknown[]): unknown {
+        programmaticFocus++;
+        try { return original.apply(this, args); } finally { programmaticFocus--; }
+      };
+      Object.defineProperty(wrapped, 'toString', { configurable: true, value: original.toString.bind(original) });
+      Object.defineProperty(prototype, name, { ...descriptor, value: wrapped });
+    }
+  }
   // Native property assignments do not emit MutationRecords or input events.
   for (const [prototype, names] of [
     [HTMLInputElement.prototype, ['value', 'checked', 'indeterminate']],

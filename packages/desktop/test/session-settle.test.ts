@@ -271,3 +271,39 @@ it('resets desktop history in place and keeps the prior history if the scan fail
     expect(session.stateIndex().states).toHaveLength(1);
   } finally { await session.close(); await rm(directory, { recursive: true, force: true }); }
 });
+
+it('captures during continuous interaction instead of extending the scan deadline forever', async () => {
+  vi.useFakeTimers();
+  const fake = fakeDesktopView();
+  let walks = 0;
+  const session = new DesktopSession({ view: fake.view, artifactsRoot: '/tmp/nexus-scheduler-test', captureDebounceMs: 200,
+    scan: async (_driver, options) => { walks++; await options?.onPhase?.('walking'); return artifact(); },
+    writeBundle: async () => ({ manifest: '', state: '', warnings: '' }), writeState: async () => '',
+  });
+  try {
+    await session.start();
+    for (let epoch = 1; epoch <= 12; epoch++) {
+      fake.settle({ settled: true, epoch, causes: ['interaction'] });
+      await vi.advanceTimersByTimeAsync(50);
+    }
+    expect(walks).toBeGreaterThanOrEqual(2);
+  } finally { await session.close(); vi.useRealTimers(); }
+});
+
+it('starts extraction at DOM ready even when the page load never finishes', async () => {
+  const fake = fakeDesktopView();
+  const contents = fake.view.webContents;
+  vi.mocked(contents.loadURL).mockImplementation(() => new Promise(() => {}));
+  const scan = vi.fn(async () => artifact());
+  const session = new DesktopSession({ view: fake.view, artifactsRoot: '/tmp/nexus-dom-ready-test', captureDebounceMs: 1,
+    scan, writeBundle: async () => ({ manifest: '', state: '', warnings: '' }), writeState: async () => '',
+  });
+  try {
+    await session.start();
+    const navigation = session.goto('https://example.test/app');
+    contents.emit('dom-ready');
+    await navigation;
+    await vi.waitFor(() => expect(scan).toHaveBeenCalled());
+    expect(session.stateIndex().currentStateId).toBe('state_a');
+  } finally { await session.close(); }
+});

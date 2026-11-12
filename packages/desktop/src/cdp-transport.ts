@@ -14,6 +14,15 @@ export class ElectronCdpTransport implements CdpTransport {
   readonly #debugger: Debugger;
   readonly #handlers = new Set<CdpEventHandler>();
   #attached = false;
+  readonly #pending = new Set<{ method: string; sessionId: string | undefined; reject(error: Error): void }>();
+
+  #cancelPending(message: string, sessionId?: string, evaluationsOnly = false): void {
+    for (const pending of this.#pending) {
+      if (sessionId !== undefined && pending.sessionId !== sessionId) continue;
+      if (evaluationsOnly && !['Runtime.evaluate', 'Runtime.callFunctionOn'].includes(pending.method)) continue;
+      pending.reject(new Error(message));
+    }
+  }
 
   constructor(contents: WebContents) {
     if (contents.debugger === undefined) {
@@ -32,11 +41,18 @@ export class ElectronCdpTransport implements CdpTransport {
     this.#debugger.attach('1.3');
     this.#attached = true;
     this.#debugger.on('message', (_event, method, params, sessionId) => {
+      if (method === 'Runtime.executionContextsCleared') {
+        this.#cancelPending('The document changed during evaluation.', sessionId || undefined, true);
+      }
+      if (method === 'Target.detachedFromTarget' && typeof params?.sessionId === 'string') {
+        this.#cancelPending('The frame detached during extraction.', params.sessionId);
+      }
       for (const handler of this.#handlers) {
         handler(method, (params ?? {}) as Record<string, unknown>, sessionId || undefined);
       }
     });
     this.#debugger.on('detach', () => {
+      this.#cancelPending('The page debugger disconnected.');
       this.#attached = false;
     });
   }
@@ -57,7 +73,19 @@ export class ElectronCdpTransport implements CdpTransport {
     params: Record<string, unknown> = {},
     sessionId?: string,
   ): Promise<T> {
-    return (await this.#debugger.sendCommand(method, params, sessionId)) as T;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let pending: { method: string; sessionId: string | undefined; reject(error: Error): void } | undefined;
+    const interrupted = new Promise<never>((_resolve, reject) => {
+      pending = { method, sessionId, reject };
+      this.#pending.add(pending);
+      timer = setTimeout(() => reject(new Error(`Page inspection timed out: ${method}`)), 12_000);
+    });
+    try {
+      return await Promise.race([this.#debugger.sendCommand(method, params, sessionId), interrupted]) as T;
+    } finally {
+      clearTimeout(timer);
+      if (pending !== undefined) this.#pending.delete(pending);
+    }
   }
 
   on(handler: CdpEventHandler): void {

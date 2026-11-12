@@ -1,5 +1,6 @@
-export { ObservationJournal } from './observe/journal.js';
-import { createHash } from 'node:crypto';
+export { PageNames } from "./artifact/page-names.js";
+export { ObservationJournal } from "./observe/journal.js";
+import { createHash } from "node:crypto";
 
 import type {
   Action,
@@ -11,23 +12,25 @@ import type {
   Observable,
   StateArtifact,
   Warning,
-} from '@nexus/schema';
-import type { Page } from 'playwright';
+} from "@nexus/schema";
+import type { Page } from "playwright";
 
 import {
   type DriverFrame,
   fromPlaywrightPage,
   isPageDriver,
   type PageDriver,
-} from './driver/index.js';
+} from "./driver/index.js";
 
+import { buildComponentTree } from "./component-tree/index.js";
+import { buildNavigationGraph } from "./graph/index.js";
 import {
-  buildComponentTree,
-} from './component-tree/index.js';
-import { buildNavigationGraph } from './graph/index.js';
-import { fingerprintState, normalizeRoute, stableHash } from './identity/index.js';
-import { rawActionElementIdPrefix, StateElementIdAllocator } from './ids.js';
-import { BOOTSTRAP_SOURCE } from './instrument/index.js';
+  fingerprintState,
+  normalizeRoute,
+  stableHash,
+} from "./identity/index.js";
+import { rawActionElementIdPrefix, StateElementIdAllocator } from "./ids.js";
+import { BOOTSTRAP_SOURCE } from "./instrument/index.js";
 import type {
   RawAction,
   RawCollection,
@@ -35,32 +38,39 @@ import type {
   RawObservable,
   RawRect,
   RawRegion,
-} from './instrument/types.js';
+} from "./instrument/types.js";
 
-export { writeArtifactBundle, writeStateArtifact } from './artifact/write-artifact.js';
-export { BOOTSTRAP_SOURCE, installInstrumentation, nexusBootstrap } from './instrument/index.js';
+export {
+  writeArtifactBundle,
+  writeStateArtifact,
+} from "./artifact/write-artifact.js";
+export {
+  BOOTSTRAP_SOURCE,
+  installInstrumentation,
+  nexusBootstrap,
+} from "./instrument/index.js";
 export type {
   NexusMaterialCause,
   NexusQuiescence,
   NexusSemanticSurface,
   NexusSettledNotification,
-} from './instrument/index.js';
-export { normalizeRoute } from './identity/index.js';
-export { buildNavigationGraph, navigationGraphNodeId } from './graph/index.js';
+} from "./instrument/index.js";
+export { normalizeRoute } from "./identity/index.js";
+export { buildNavigationGraph, navigationGraphNodeId } from "./graph/index.js";
 export {
   buildComponentTree,
   componentPathForRef,
   componentPathIndex,
-} from './component-tree/index.js';
+} from "./component-tree/index.js";
 export {
   actionElementIdPrefix,
   allocatorForArtifact,
   StateElementIdAllocator,
-} from './ids.js';
+} from "./ids.js";
 export {
   mergePresentationGeometry,
   type PresentationGeometryMerge,
-} from './presentation/index.js';
+} from "./presentation/index.js";
 export {
   CdpDriver,
   fromPlaywrightPage,
@@ -71,7 +81,7 @@ export {
   type CdpTransport,
   type DriverFrame,
   type PageDriver,
-} from './driver/index.js';
+} from "./driver/index.js";
 
 export interface ExtractionGroupPayload {
   group: Group;
@@ -126,14 +136,14 @@ interface CollectionWithFrame {
 }
 
 function phaseOneStateId(url: string, personaId: string): string {
-  return createHash('sha256')
+  return createHash("sha256")
     .update(`phase-1\n${url}\n${personaId}`)
-    .digest('hex');
+    .digest("hex");
 }
 
 function legacyRoute(url: string): string {
   try {
-    return new URL(url).pathname || '/';
+    return new URL(url).pathname || "/";
   } catch {
     return url;
   }
@@ -141,9 +151,11 @@ function legacyRoute(url: string): string {
 
 function isRealPlaywrightPage(page: Page): boolean {
   const value = page as unknown as Record<string, unknown>;
-  return typeof value.frames === 'function'
-    && typeof value.addInitScript === 'function'
-    && typeof value.mainFrame === 'function';
+  return (
+    typeof value.frames === "function" &&
+    typeof value.addInitScript === "function" &&
+    typeof value.mainFrame === "function"
+  );
 }
 
 async function legacyEmptyArtifact(
@@ -152,8 +164,8 @@ async function legacyEmptyArtifact(
   startedAt: number,
 ): Promise<StateArtifact> {
   const url = page.url();
-  const personaId = options.personaId ?? 'anonymous';
-  const title = await page.title().catch(() => '');
+  const personaId = options.personaId ?? "anonymous";
+  const title = await page.title().catch(() => "");
   const artifact: StateArtifact = {
     schemaVersion: 1,
     stateId: phaseOneStateId(url, personaId),
@@ -161,7 +173,7 @@ async function legacyEmptyArtifact(
     routeTemplate: legacyRoute(url),
     title,
     personaId,
-    buildId: options.buildId ?? 'phase-1',
+    buildId: options.buildId ?? "phase-1",
     capturedAt: new Date().toISOString(),
     timings: { total: Math.max(0, performance.now() - startedAt) },
     groups: [],
@@ -198,14 +210,16 @@ function composeRect(rect: RawRect, geometry: FrameGeometry): RawRect {
 }
 
 function intersects(rect: RawRect, clip: RawRect): boolean {
-  return rect.w > 0
-    && rect.h > 0
-    && clip.w > 0
-    && clip.h > 0
-    && rect.x + rect.w > clip.x
-    && rect.y + rect.h > clip.y
-    && rect.x < clip.x + clip.w
-    && rect.y < clip.y + clip.h;
+  return (
+    rect.w > 0 &&
+    rect.h > 0 &&
+    clip.w > 0 &&
+    clip.h > 0 &&
+    rect.x + rect.w > clip.x &&
+    rect.y + rect.h > clip.y &&
+    rect.x < clip.x + clip.w &&
+    rect.y < clip.y + clip.h
+  );
 }
 
 /**
@@ -227,7 +241,7 @@ async function geometryForFrame(
   const pending = (async (): Promise<FrameGeometry> => {
     const viewport = await driver.evaluate<{ width: number; height: number }>(
       frame,
-      '() => ({ width: window.innerWidth, height: window.innerHeight })',
+      "() => ({ width: window.innerWidth, height: window.innerHeight })",
     );
     if (frame.parentId === null) {
       return {
@@ -241,16 +255,20 @@ async function geometryForFrame(
 
     const parent = byId.get(frame.parentId);
     if (parent === undefined) {
-      throw new Error('Attached child frame has no parent frame.');
+      throw new Error("Attached child frame has no parent frame.");
     }
     const parentGeometry = await geometryForFrame(driver, parent, byId, cache);
     const placement = await driver.frameOwner(frame);
-    const localScaleX = viewport.width > 0 ? placement.width / viewport.width : 1;
-    const localScaleY = viewport.height > 0 ? placement.height / viewport.height : 1;
+    const localScaleX =
+      viewport.width > 0 ? placement.width / viewport.width : 1;
+    const localScaleY =
+      viewport.height > 0 ? placement.height / viewport.height : 1;
     const scaleX = parentGeometry.scaleX * localScaleX;
     const scaleY = parentGeometry.scaleY * localScaleY;
-    const offsetX = parentGeometry.offsetX + placement.x * parentGeometry.scaleX;
-    const offsetY = parentGeometry.offsetY + placement.y * parentGeometry.scaleY;
+    const offsetX =
+      parentGeometry.offsetX + placement.x * parentGeometry.scaleX;
+    const offsetY =
+      parentGeometry.offsetY + placement.y * parentGeometry.scaleY;
     const ownViewport = {
       x: offsetX,
       y: offsetY,
@@ -287,11 +305,7 @@ async function readFrame(
   );
 }
 
-function warning(
-  code: Warning['code'],
-  detail: string,
-  ref?: string,
-): Warning {
+function warning(code: Warning["code"], detail: string, ref?: string): Warning {
   return ref === undefined ? { code, detail } : { code, detail, ref };
 }
 
@@ -299,11 +313,11 @@ function locatorRecipes(raw: RawAction, framePath: string): Locator[] {
   const common = { frame: framePath, shadowPath: [...raw.shadowPath] };
   const locators: Locator[] = [];
   if (raw.locator.testId !== null) {
-    locators.push({ kind: 'testid', value: raw.locator.testId, ...common });
+    locators.push({ kind: "testid", value: raw.locator.testId, ...common });
   }
-  if (raw.role !== '' && raw.label !== '') {
+  if (raw.role !== "" && raw.label !== "") {
     locators.push({
-      kind: 'role_name',
+      kind: "role_name",
       value: raw.label,
       role: raw.role,
       name: raw.label,
@@ -311,18 +325,30 @@ function locatorRecipes(raw: RawAction, framePath: string): Locator[] {
     });
   }
   if (raw.locator.associatedLabel !== null) {
-    locators.push({ kind: 'label', value: raw.locator.associatedLabel, ...common });
+    locators.push({
+      kind: "label",
+      value: raw.locator.associatedLabel,
+      ...common,
+    });
   }
   if (raw.locator.placeholder !== null) {
-    locators.push({ kind: 'placeholder', value: raw.locator.placeholder, ...common });
+    locators.push({
+      kind: "placeholder",
+      value: raw.locator.placeholder,
+      ...common,
+    });
   }
-  if (raw.label !== '' && raw.visible) {
-    locators.push({ kind: 'text', value: raw.label, ...common });
+  if (raw.label !== "" && raw.visible) {
+    locators.push({ kind: "text", value: raw.label, ...common });
   }
-  locators.push({ kind: 'structural', value: raw.locator.structural, ...common });
+  locators.push({
+    kind: "structural",
+    value: raw.locator.structural,
+    ...common,
+  });
   const seen = new Set<string>();
   return locators.filter((locator) => {
-    const key = `${locator.kind}|${locator.value}|${locator.role ?? ''}`;
+    const key = `${locator.kind}|${locator.value}|${locator.role ?? ""}`;
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
@@ -331,12 +357,12 @@ function locatorRecipes(raw: RawAction, framePath: string): Locator[] {
 
 function stableActionId(raw: RawAction, framePath: string): string {
   if (
-    raw.collectionKey !== null
-    && raw.collectionMemberKey !== null
-    && raw.relPath !== null
+    raw.collectionKey !== null &&
+    raw.collectionMemberKey !== null &&
+    raw.relPath !== null
   ) {
     return stableHash(
-      'collection-action-v1',
+      "collection-action-v1",
       framePath,
       raw.collectionKey,
       raw.collectionMemberKey,
@@ -347,9 +373,9 @@ function stableActionId(raw: RawAction, framePath: string): string {
     );
   }
   return stableHash(
-    'action-v1',
+    "action-v1",
     framePath,
-    raw.shadowPath.join('>'),
+    raw.shadowPath.join(">"),
     raw.locator.testId ?? raw.locator.structural,
     raw.role,
     raw.type,
@@ -359,12 +385,12 @@ function stableActionId(raw: RawAction, framePath: string): string {
 
 function stableObservableId(raw: RawObservable, framePath: string): string {
   if (
-    raw.collectionKey !== null
-    && raw.collectionMemberKey !== null
-    && raw.relPath !== null
+    raw.collectionKey !== null &&
+    raw.collectionMemberKey !== null &&
+    raw.relPath !== null
   ) {
     return stableHash(
-      'collection-observable-v1',
+      "collection-observable-v1",
       framePath,
       raw.collectionKey,
       raw.collectionMemberKey,
@@ -374,7 +400,7 @@ function stableObservableId(raw: RawObservable, framePath: string): string {
     );
   }
   return stableHash(
-    'observable-v1',
+    "observable-v1",
     framePath,
     raw.nodeKey,
     raw.kind,
@@ -382,8 +408,8 @@ function stableObservableId(raw: RawObservable, framePath: string): string {
   );
 }
 
-function addOptionalActionState(raw: RawAction): Action['state'] {
-  const state: Action['state'] = { disabled: raw.state.disabled };
+function addOptionalActionState(raw: RawAction): Action["state"] {
+  const state: Action["state"] = { disabled: raw.state.disabled };
   if (raw.state.expanded !== null) state.expanded = raw.state.expanded;
   if (raw.state.checked !== null) state.checked = raw.state.checked;
   if (raw.state.selected !== null) state.selected = raw.state.selected;
@@ -399,20 +425,20 @@ function templateLabel(
   emptyFallback = label,
 ): string {
   let value = label;
-  if (anchor !== null && anchor !== '' && value.includes(anchor)) {
-    value = value.replace(anchor, '').replace(/\s+/gu, ' ').trim();
+  if (anchor !== null && anchor !== "" && value.includes(anchor)) {
+    value = value.replace(anchor, "").replace(/\s+/gu, " ").trim();
   }
-  value = value.replace(/\s+\d+$/u, '').trim();
-  if (/^Add$/iu.test(value)) return 'Add product';
+  value = value.replace(/\s+\d+$/u, "").trim();
+  if (/^Add$/iu.test(value)) return "Add product";
   return value || emptyFallback;
 }
 
 function collectionItemName(label: string): string {
-  if (/\b(?:inventory|product|catalog)\b/iu.test(label)) return 'product';
-  if (/\bapps?\b/iu.test(label)) return 'app';
-  if (/\bcustomers?\b/iu.test(label)) return 'customer';
-  if (/\borders?\b/iu.test(label)) return 'order';
-  return 'item';
+  if (/\b(?:inventory|product|catalog)\b/iu.test(label)) return "product";
+  if (/\bapps?\b/iu.test(label)) return "app";
+  if (/\bcustomers?\b/iu.test(label)) return "customer";
+  if (/\borders?\b/iu.test(label)) return "order";
+  return "item";
 }
 
 function elapsed(start: number): number {
@@ -444,7 +470,7 @@ export async function scanState(
     await options.onPhase?.(phase);
   };
 
-  await emitPhase('injecting');
+  await emitPhase("injecting");
   const instrumentStarted = performance.now();
   await driver.addInitScript(BOOTSTRAP_SOURCE);
   timings.instrumenting = elapsed(instrumentStarted);
@@ -453,64 +479,86 @@ export async function scanState(
     frame,
     path: frame.path,
   }));
+  //prepareDom calls registerShadowRoots() which only registers the open/closed shadow roots in the
+  // window.__nexusDom and window.__nexus runtimes using the registerShadowRoots()
   await driver.prepareDom?.().catch((error: unknown) => {
-    warnings.push(warning('shadow_root_unreachable', `Closed-root recovery failed: ${String(error)}`));
+    warnings.push(
+      warning(
+        "shadow_root_unreachable",
+        `Closed-root recovery failed: ${String(error)}`,
+      ),
+    );
   });
-  const framesById = new Map(frameEntries.map(({ frame }) => [frame.id, frame]));
+  const framesById = new Map(
+    frameEntries.map(({ frame }) => [frame.id, frame]),
+  );
 
   // Compare the iframes each document declares against the frames the driver
   // could actually reach. A frame that is simply absent from the driver's tree
   // produces no per-frame error, so without this check an out-of-process iframe
   // would be reported as an empty region of the page rather than as an
   // unreachable one — coverage that looks complete but is not.
-  await Promise.all(frameEntries.map(async ({ frame, path }) => {
-    const declared = await driver
-      .evaluate<number>(frame, `() => document.querySelectorAll('iframe, frame').length`)
-      .catch(() => 0);
-    const reached = frameEntries.filter(
-      (entry) => entry.frame.parentId === frame.id,
-    ).length;
-    if (declared > reached) {
-      warnings.push(warning(
-        'frame_inaccessible',
-        `${declared - reached} of ${declared} embedded frames could not be reached `
-        + `(likely cross-origin). Their contents are absent from this inventory.`,
-        path,
-      ));
-    }
-  }));
+  await Promise.all(
+    frameEntries.map(async ({ frame, path }) => {
+      const declared = await driver
+        .evaluate<number>(
+          frame,
+          `() => document.querySelectorAll('iframe, frame').length`,
+        )
+        .catch(() => 0);
+      const reached = frameEntries.filter(
+        (entry) => entry.frame.parentId === frame.id,
+      ).length;
+      if (declared > reached) {
+        warnings.push(
+          warning(
+            "frame_inaccessible",
+            `${declared - reached} of ${declared} embedded frames could not be reached ` +
+              `(likely cross-origin). Their contents are absent from this inventory.`,
+            path,
+          ),
+        );
+      }
+    }),
+  );
 
-  await emitPhase('settling');
+  await emitPhase("settling");
   const settleStarted = performance.now();
   const timeout = options.quiescenceTimeoutMs ?? 8_000;
-  await Promise.all(frameEntries.map(async ({ frame, path }) => {
-    try {
-      const settled = await driver.evaluate<boolean>(
-        frame,
-        `(timeoutMs) => {
+  await Promise.all(
+    frameEntries.map(async ({ frame, path }) => {
+      try {
+        const settled = await driver.evaluate<boolean>(
+          frame,
+          `(timeoutMs) => {
           const runtime = window.__nexus;
           return runtime === undefined ? false : runtime.waitForQuiescence(timeoutMs);
         }`,
-        timeout,
-      );
-      if (!settled) {
-        warnings.push(warning(
-          'quiescence_timeout',
-          `Frame did not become quiescent within ${timeout}ms.`,
-          path,
-        ));
+          timeout,
+        );
+        if (!settled) {
+          warnings.push(
+            warning(
+              "quiescence_timeout",
+              `Frame did not become quiescent within ${timeout}ms.`,
+              path,
+            ),
+          );
+        }
+      } catch (error) {
+        warnings.push(
+          warning(
+            "frame_inaccessible",
+            `Could not observe frame quiescence: ${error instanceof Error ? error.message : String(error)}`,
+            path,
+          ),
+        );
       }
-    } catch (error) {
-      warnings.push(warning(
-        'frame_inaccessible',
-        `Could not observe frame quiescence: ${error instanceof Error ? error.message : String(error)}`,
-        path,
-      ));
-    }
-  }));
+    }),
+  );
   timings.settling = elapsed(settleStarted);
 
-  await emitPhase('walking');
+  await emitPhase("walking");
   const walkStarted = performance.now();
   const frameResults: FrameResult[] = [];
   const dom: DomSnapshot[] = [];
@@ -526,69 +574,122 @@ export async function scanState(
       );
       // Read the placement after quiescence and alongside the DOM walk so the
       // arena overlay cannot use a pre-settle iframe position.
-      const geometry = await geometryForFrame(driver, frame, framesById, geometryCache);
+      const geometry = await geometryForFrame(
+        driver,
+        frame,
+        framesById,
+        geometryCache,
+      );
       frameResults.push({ frame, path, geometry, raw });
-      const snapshot = await driver.evaluate<DomSnapshot>(frame, '(path) => window.__nexusDom.snapshot(path)', path);
-      for (const element of snapshot.elements) element.rect = composeRect(element.rect, geometry);
+      const snapshot = await driver.evaluate<DomSnapshot>(
+        frame,
+        "(path) => window.__nexusDom.snapshot(path)",
+        path,
+      );
+      for (const element of snapshot.elements)
+        element.rect = composeRect(element.rect, geometry);
       dom.push(snapshot);
       for (const rawWarning of raw.warnings) {
-        warnings.push(rawWarning.ref === null
-          ? warning(rawWarning.code, rawWarning.detail)
-          : warning(rawWarning.code, rawWarning.detail, rawWarning.ref));
+        warnings.push(
+          rawWarning.ref === null
+            ? warning(rawWarning.code, rawWarning.detail)
+            : warning(rawWarning.code, rawWarning.detail, rawWarning.ref),
+        );
       }
     } catch (error) {
-      warnings.push(warning(
-        'frame_inaccessible',
-        `Could not extract frame: ${error instanceof Error ? error.message : String(error)}`,
-        path,
-      ));
+      warnings.push(
+        warning(
+          "frame_inaccessible",
+          `Could not extract frame: ${error instanceof Error ? error.message : String(error)}`,
+          path,
+        ),
+      );
     }
   }
   timings.walking = elapsed(walkStarted);
 
-  await emitPhase('classifying');
+  await emitPhase("classifying");
   const classifyStarted = performance.now();
-  const regions: RegionWithFrame[] = frameResults.flatMap(({ path, raw }) =>
-    raw.regions.map((region) => ({ framePath: path, raw: region })),
-  ).sort((left, right) =>
-    left.framePath.localeCompare(right.framePath) || left.raw.order - right.raw.order,
-  );
-  const allRawActions: ActionWithFrame[] = frameResults.flatMap(({ path, raw }) =>
-    raw.actions.map((action) => ({ framePath: path, raw: action })),
-  ).sort((left, right) =>
-    left.framePath.localeCompare(right.framePath) || left.raw.order - right.raw.order,
-  );
+  const regions: RegionWithFrame[] = frameResults
+    .flatMap(({ path, raw }) =>
+      raw.regions.map((region) => ({ framePath: path, raw: region })),
+    )
+    .sort(
+      (left, right) =>
+        left.framePath.localeCompare(right.framePath) ||
+        left.raw.order - right.raw.order,
+    );
+  const allRawActions: ActionWithFrame[] = frameResults
+    .flatMap(({ path, raw }) =>
+      raw.actions.map((action) => ({ framePath: path, raw: action })),
+    )
+    .sort(
+      (left, right) =>
+        left.framePath.localeCompare(right.framePath) ||
+        left.raw.order - right.raw.order,
+    );
   // A delegated listener belongs to a framework root, not to every visual
   // control below it. Retain a listener-only element when it is the actual
   // target, but collapse an ID-addressable ancestor that contains independently
   // evidenced descendants.
   const rawActions: ActionWithFrame[] = allRawActions.filter((entry) => {
     const { raw } = entry;
-    const isListenerOnlyContainer = raw.evidence.includes('listener_registry')
-      && !raw.evidence.some((signal) =>
-        ['native_tag', 'ax_role', 'aria_role', 'react_props', 'contenteditable', 'inline_handler'].includes(signal),
+    const isListenerOnlyContainer =
+      raw.evidence.includes("listener_registry") &&
+      !raw.evidence.some((signal) =>
+        [
+          "native_tag",
+          "ax_role",
+          "aria_role",
+          "react_props",
+          "contenteditable",
+          "inline_handler",
+        ].includes(signal),
       );
-    if (!isListenerOnlyContainer || !raw.locator.structural.startsWith('#')) return true;
+    if (!isListenerOnlyContainer || !raw.locator.structural.startsWith("#"))
+      return true;
     const id = raw.locator.structural.slice(1);
-    return !allRawActions.some((candidate) =>
-      candidate !== entry
-      && candidate.framePath === entry.framePath
-      && candidate.raw.ancestorIds.includes(id)
-      && candidate.raw.evidence.some((signal) =>
-        ['native_tag', 'ax_role', 'aria_role', 'react_props', 'contenteditable', 'inline_handler'].includes(signal),
-      ),
+    return !allRawActions.some(
+      (candidate) =>
+        candidate !== entry &&
+        candidate.framePath === entry.framePath &&
+        candidate.raw.ancestorIds.includes(id) &&
+        candidate.raw.evidence.some((signal) =>
+          [
+            "native_tag",
+            "ax_role",
+            "aria_role",
+            "react_props",
+            "contenteditable",
+            "inline_handler",
+          ].includes(signal),
+        ),
     );
   });
-  const rawObservables: ObservableWithFrame[] = frameResults.flatMap(({ path, raw }) =>
-    raw.observables.map((observable) => ({ framePath: path, raw: observable })),
-  ).sort((left, right) =>
-    left.framePath.localeCompare(right.framePath) || left.raw.order - right.raw.order,
-  );
-  const rawCollections: CollectionWithFrame[] = frameResults.flatMap(({ path, raw }) =>
-    raw.collections.map((collection) => ({ framePath: path, raw: collection })),
-  ).sort((left, right) =>
-    left.framePath.localeCompare(right.framePath) || left.raw.order - right.raw.order,
-  );
+  const rawObservables: ObservableWithFrame[] = frameResults
+    .flatMap(({ path, raw }) =>
+      raw.observables.map((observable) => ({
+        framePath: path,
+        raw: observable,
+      })),
+    )
+    .sort(
+      (left, right) =>
+        left.framePath.localeCompare(right.framePath) ||
+        left.raw.order - right.raw.order,
+    );
+  const rawCollections: CollectionWithFrame[] = frameResults
+    .flatMap(({ path, raw }) =>
+      raw.collections.map((collection) => ({
+        framePath: path,
+        raw: collection,
+      })),
+    )
+    .sort(
+      (left, right) =>
+        left.framePath.localeCompare(right.framePath) ||
+        left.raw.order - right.raw.order,
+    );
   const geometryByFramePath = new Map(
     frameResults.map(({ path, geometry }) => [path, geometry] as const),
   );
@@ -601,7 +702,7 @@ export async function scanState(
   };
   timings.classifying = elapsed(classifyStarted);
 
-  await emitPhase('grouping');
+  await emitPhase("grouping");
   const groupingStarted = performance.now();
   const groupByRegionKey = new Map<string, Group>();
   const groupRegionSource = new Map<string, RegionWithFrame>();
@@ -623,9 +724,10 @@ export async function scanState(
   });
   for (const entry of regions) {
     const group = groupByRegionKey.get(entry.raw.key);
-    const parent = entry.raw.parentKey === null
-      ? undefined
-      : groupByRegionKey.get(entry.raw.parentKey);
+    const parent =
+      entry.raw.parentKey === null
+        ? undefined
+        : groupByRegionKey.get(entry.raw.parentKey);
     if (group !== undefined && parent !== undefined && parent.id !== group.id) {
       group.parentGroup = parent.id;
     }
@@ -640,10 +742,14 @@ export async function scanState(
       (options.observedMethods ?? []).map((method) => method.toUpperCase()),
     );
     let risk = raw.risk;
-    if (risk === 'unknown' && raw.kind === 'submit') {
-      if (observedMethods.has('DELETE')) risk = 'destructive';
-      else if ([...observedMethods].some((method) => ['POST', 'PUT', 'PATCH'].includes(method))) {
-        risk = 'mutating';
+    if (risk === "unknown" && raw.kind === "submit") {
+      if (observedMethods.has("DELETE")) risk = "destructive";
+      else if (
+        [...observedMethods].some((method) =>
+          ["POST", "PUT", "PATCH"].includes(method),
+        )
+      ) {
+        risk = "mutating";
       }
     }
     const action: Action = {
@@ -660,7 +766,8 @@ export async function scanState(
       inViewport: raw.visible && intersects(rect, geometry.clip),
       hitTestable: raw.hitTestable,
       occludedBy: raw.occludedBy,
-      region: groupByRegionKey.get(raw.regionKey)?.id ?? fallbackGroup?.id ?? 'g0',
+      region:
+        groupByRegionKey.get(raw.regionKey)?.id ?? fallbackGroup?.id ?? "g0",
       frame: framePath,
       shadowPath: [...raw.shadowPath],
       rect,
@@ -668,7 +775,8 @@ export async function scanState(
     };
     if (raw.value !== null) action.value = raw.value;
     if (raw.placeholder !== null) action.placeholder = raw.placeholder;
-    if (raw.observedDestination !== null) action.observedDestination = raw.observedDestination;
+    if (raw.observedDestination !== null)
+      action.observedDestination = raw.observedDestination;
     return action;
   });
 
@@ -680,17 +788,21 @@ export async function scanState(
   actions.forEach((action, index) => {
     const source = rawActions[index];
     if (source === undefined) return;
-    let region = regions.find(({ raw }) => raw.key === source.raw.regionKey)?.raw;
+    let region = regions.find(
+      ({ raw }) => raw.key === source.raw.regionKey,
+    )?.raw;
     while (region !== undefined) {
       if (region.controlledBy !== null) {
         const controller = actionByNodeKey.get(region.controlledBy);
-        if (controller !== undefined && controller.id !== action.id) action.parentAction = controller.id;
+        if (controller !== undefined && controller.id !== action.id)
+          action.parentAction = controller.id;
         break;
       }
       const parentKey = region.parentKey;
-      region = parentKey === null
-        ? undefined
-        : regions.find(({ raw }) => raw.key === parentKey)?.raw;
+      region =
+        parentKey === null
+          ? undefined
+          : regions.find(({ raw }) => raw.key === parentKey)?.raw;
     }
   });
 
@@ -700,19 +812,21 @@ export async function scanState(
     const source = rawActions[index];
     if (source === undefined || source.raw.optionOfKey === null) return;
     const owner = actionByNodeKey.get(source.raw.optionOfKey);
-    if (owner !== undefined && owner.id !== action.id) action.parentAction = owner.id;
+    if (owner !== undefined && owner.id !== action.id)
+      action.parentAction = owner.id;
   });
 
   const observables: Observable[] = rawObservables.map(({ framePath, raw }) => {
     const geometry = geometryForPath(framePath);
     return {
-      id: elementIds.next('obs'),
+      id: elementIds.next("obs"),
       stableId: stableObservableId(raw, framePath),
       kind: raw.kind,
       label: raw.label.slice(0, 180),
       valueType: raw.valueType,
       currentValue: raw.currentValue.slice(0, 1000),
-      region: groupByRegionKey.get(raw.regionKey)?.id ?? fallbackGroup?.id ?? 'g0',
+      region:
+        groupByRegionKey.get(raw.regionKey)?.id ?? fallbackGroup?.id ?? "g0",
       ...(raw.anchor === null ? {} : { anchor: raw.anchor }),
       frame: framePath,
       shadowPath: [...raw.shadowPath],
@@ -723,53 +837,76 @@ export async function scanState(
   const observableByNodeKey = new Map<string, Observable>();
   rawObservables.forEach(({ raw }, index) => {
     const observable = observables[index];
-    if (observable !== undefined) observableByNodeKey.set(raw.nodeKey, observable);
+    if (observable !== undefined)
+      observableByNodeKey.set(raw.nodeKey, observable);
   });
 
   actions.forEach((action, index) => {
     const source = rawActions[index];
-    if (source !== undefined) groupByRegionKey.get(source.raw.regionKey)?.actions.push(action.id);
+    if (source !== undefined)
+      groupByRegionKey.get(source.raw.regionKey)?.actions.push(action.id);
   });
   observables.forEach((observable, index) => {
     const source = rawObservables[index];
-    if (source !== undefined) groupByRegionKey.get(source.raw.regionKey)?.observables.push(observable.id);
+    if (source !== undefined)
+      groupByRegionKey
+        .get(source.raw.regionKey)
+        ?.observables.push(observable.id);
   });
 
   const collections: Collection[] = rawCollections.map(({ framePath, raw }) => {
     const memberActions = rawActions
-      .map((entry, actionIndex) => ({ entry, action: actions[actionIndex] as Action }))
+      .map((entry, actionIndex) => ({
+        entry,
+        action: actions[actionIndex] as Action,
+      }))
       .filter(({ entry }) => entry.raw.collectionKey === raw.key);
     const memberObservables = rawObservables
-      .map((entry, observableIndex) => ({ entry, observable: observables[observableIndex] as Observable }))
+      .map((entry, observableIndex) => ({
+        entry,
+        observable: observables[observableIndex] as Observable,
+      }))
       .filter(({ entry }) => entry.raw.collectionKey === raw.key);
-    const actionTemplates = new Map<string, Collection['itemActions'][number]>();
+    const actionTemplates = new Map<
+      string,
+      Collection["itemActions"][number]
+    >();
     for (const { entry, action } of memberActions) {
-      const fallback = action.kind === 'navigate' || action.kind === 'open'
-        ? `Open ${collectionItemName(raw.label)}`
-        : 'Item action';
+      const fallback =
+        action.kind === "navigate" || action.kind === "open"
+          ? `Open ${collectionItemName(raw.label)}`
+          : "Item action";
       const label = templateLabel(action.label, entry.raw.anchor, fallback);
-      const key = `${label}|${action.kind}|${action.risk}|${entry.raw.relPath ?? ''}`;
+      const key = `${label}|${action.kind}|${action.risk}|${entry.raw.relPath ?? ""}`;
       actionTemplates.set(key, {
         label,
         kind: action.kind,
         risk: action.risk,
-        relPath: entry.raw.relPath ?? ':scope',
+        relPath: entry.raw.relPath ?? ":scope",
       });
     }
-    const observableTemplates = new Map<string, Collection['itemObservables'][number]>();
+    const observableTemplates = new Map<
+      string,
+      Collection["itemObservables"][number]
+    >();
     for (const { entry, observable } of memberObservables) {
       const label = templateLabel(observable.label, entry.raw.anchor);
-      const key = `${label}|${observable.valueType}|${entry.raw.relPath ?? ''}`;
+      const key = `${label}|${observable.valueType}|${entry.raw.relPath ?? ""}`;
       observableTemplates.set(key, {
         label,
         valueType: observable.valueType,
-        relPath: entry.raw.relPath ?? ':scope',
+        relPath: entry.raw.relPath ?? ":scope",
       });
     }
     const collection: Collection = {
-      id: elementIds.next('col'),
+      id: elementIds.next("col"),
       label: raw.label,
-      templateId: stableHash('collection-v1', framePath, raw.key, raw.anchorRelPath),
+      templateId: stableHash(
+        "collection-v1",
+        framePath,
+        raw.key,
+        raw.anchorRelPath,
+      ),
       anchorField: {
         relPath: raw.anchorRelPath,
         entropy: raw.anchorEntropy,
@@ -783,73 +920,91 @@ export async function scanState(
       itemObservables: [...observableTemplates.values()],
       anchors: [...raw.anchors],
       rows: (raw.rows ?? []).map((row) => {
-        const anchorAction = row.anchorActionNodeKey === null
-          ? undefined
-          : actionByNodeKey.get(row.anchorActionNodeKey);
+        const anchorAction =
+          row.anchorActionNodeKey === null
+            ? undefined
+            : actionByNodeKey.get(row.anchorActionNodeKey);
         const cells = row.cells.flatMap((cell) => {
-          const action = cell.actionNodeKey === null
-            ? undefined
-            : actionByNodeKey.get(cell.actionNodeKey);
-          const observable = cell.observableNodeKey === null
-            ? undefined
-            : observableByNodeKey.get(cell.observableNodeKey);
+          const action =
+            cell.actionNodeKey === null
+              ? undefined
+              : actionByNodeKey.get(cell.actionNodeKey);
+          const observable =
+            cell.observableNodeKey === null
+              ? undefined
+              : observableByNodeKey.get(cell.observableNodeKey);
           // A classifier filter may remove a listener-only false positive
           // after the in-page walk. Do not publish a dangling concrete cell.
-          if (cell.type === 'action' && action === undefined) return [];
-          if (cell.type === 'observable' && observable === undefined) return [];
-          return [{
-            column: cell.column,
-            type: cell.type,
-            value: cell.value,
-            rect: composeRect(cell.rect, geometryForPath(framePath)),
-            ...(action === undefined ? {} : { actionId: action.id }),
-            ...(observable === undefined ? {} : { observableId: observable.id }),
-          }];
+          if (cell.type === "action" && action === undefined) return [];
+          if (cell.type === "observable" && observable === undefined) return [];
+          return [
+            {
+              column: cell.column,
+              type: cell.type,
+              value: cell.value,
+              rect: composeRect(cell.rect, geometryForPath(framePath)),
+              ...(action === undefined ? {} : { actionId: action.id }),
+              ...(observable === undefined
+                ? {}
+                : { observableId: observable.id }),
+            },
+          ];
         });
         return {
           rowKey: row.rowKey,
           anchor: row.anchor,
           rect: composeRect(row.rect, geometryForPath(framePath)),
-          ...(anchorAction === undefined ? {} : { anchorActionId: anchorAction.id }),
+          ...(anchorAction === undefined
+            ? {}
+            : { anchorActionId: anchorAction.id }),
           cells,
         };
       }),
       frame: framePath,
       shadowPath: [...raw.shadowPath],
     };
-    if (raw.scrollContainer !== null) collection.scrollContainer = raw.scrollContainer;
+    if (raw.scrollContainer !== null)
+      collection.scrollContainer = raw.scrollContainer;
 
     const collectionGroup: Group = {
       id: `g${groups.length + 1}`,
       label: raw.label,
-      kind: 'collection',
+      kind: "collection",
       global: false,
       conditional: false,
       actions: [...new Set(memberActions.map(({ action }) => action.id))],
-      observables: [...new Set(memberObservables.map(({ observable }) => observable.id))],
+      observables: [
+        ...new Set(memberObservables.map(({ observable }) => observable.id)),
+      ],
       frame: framePath,
       shadowPath: [...raw.shadowPath],
     };
-    const parentRegionId = groupByRegionKey.get(raw.parentRegionKey)?.id
-      ?? memberActions[0]?.action.region
-      ?? memberObservables[0]?.observable.region;
-    if (parentRegionId !== undefined) collectionGroup.parentGroup = parentRegionId;
+    const parentRegionId =
+      groupByRegionKey.get(raw.parentRegionKey)?.id ??
+      memberActions[0]?.action.region ??
+      memberObservables[0]?.observable.region;
+    if (parentRegionId !== undefined)
+      collectionGroup.parentGroup = parentRegionId;
     groups.push(collectionGroup);
     collection.groupId = collectionGroup.id;
     return collection;
   });
 
   const collectionByRawKey = new Map(
-    rawCollections.map(({ raw }, index) => [raw.key, collections[index] as Collection]),
+    rawCollections.map(({ raw }, index) => [
+      raw.key,
+      collections[index] as Collection,
+    ]),
   );
   actions.forEach((action, index) => {
     const raw = rawActions[index]?.raw;
     if (
-      raw?.collectionKey === null
-      || raw?.collectionKey === undefined
-      || raw.collectionMemberKey === null
-      || raw.anchor === null
-    ) return;
+      raw?.collectionKey === null ||
+      raw?.collectionKey === undefined ||
+      raw.collectionMemberKey === null ||
+      raw.anchor === null
+    )
+      return;
     const collection = collectionByRawKey.get(raw.collectionKey);
     if (collection === undefined) return;
     action.collection = {
@@ -861,11 +1016,12 @@ export async function scanState(
   observables.forEach((observable, index) => {
     const raw = rawObservables[index]?.raw;
     if (
-      raw?.collectionKey === null
-      || raw?.collectionKey === undefined
-      || raw.collectionMemberKey === null
-      || raw.anchor === null
-    ) return;
+      raw?.collectionKey === null ||
+      raw?.collectionKey === undefined ||
+      raw.collectionMemberKey === null ||
+      raw.anchor === null
+    )
+      return;
     const collection = collectionByRawKey.get(raw.collectionKey);
     if (collection === undefined) return;
     observable.collection = {
@@ -877,38 +1033,45 @@ export async function scanState(
 
   for (const group of groups) {
     const source = groupRegionSource.get(group.id);
-    if (source?.raw.controlledBy !== null && source?.raw.controlledBy !== undefined) {
+    if (
+      source?.raw.controlledBy !== null &&
+      source?.raw.controlledBy !== undefined
+    ) {
       const controller = actionByNodeKey.get(source.raw.controlledBy);
       if (controller !== undefined) group.parentAction = controller.id;
     }
   }
   timings.grouping = elapsed(groupingStarted);
 
-  await emitPhase('observing');
+  await emitPhase("observing");
   const observingStarted = performance.now();
   // Interaction and mutation deltas are streamed separately by the observer.
   timings.observing = elapsed(observingStarted);
 
   const url = driver.url();
-  const title = (await driver.title()) || frameResults[0]?.raw.title || '';
-  const personaId = options.personaId ?? 'anonymous';
+  const title = (await driver.title()) || frameResults[0]?.raw.title || "";
+  const personaId = options.personaId ?? "anonymous";
   const routeTemplate = normalizeRoute(url);
   const overlayStack = regions
-    .filter(({ raw }) => (raw.kind === 'dialog' || raw.kind === 'menu') && !raw.conditional)
+    .filter(
+      ({ raw }) =>
+        (raw.kind === "dialog" || raw.kind === "menu") && !raw.conditional,
+    )
     .map(({ raw }) => `${raw.kind}:${raw.label}`);
   // Meaningful same-URL views are distinguished by active landmark and form
   // names, not by every transient control. A Login -> Checkout wizard changes
   // state, while an isolated error button or counter remains a state revision.
   const viewContext = regions
-    .filter(({ raw }) =>
-      !raw.conditional
-      && ['main', 'form', 'dialog', 'menu', 'tabset'].includes(raw.kind)
-      && raw.label.trim() !== '',
+    .filter(
+      ({ raw }) =>
+        !raw.conditional &&
+        ["main", "form", "dialog", "menu", "tabset"].includes(raw.kind) &&
+        raw.label.trim() !== "",
     )
     .map(({ raw }) => `${raw.kind}:${raw.label}`);
   const primaryRegionShape = frameResults
     .map(({ path, raw }) => `${path}:${raw.documentShape}`)
-    .join('\n');
+    .join("\n");
   const semanticStateId = fingerprintState({
     routeTemplate,
     overlayStack,
@@ -920,10 +1083,18 @@ export async function scanState(
 
   // Every DOM value/attribute/structure participates; document-local IDs and
   // viewport rectangles do not turn identical captures into new states.
-  const stateId = stableHash(semanticStateId, JSON.stringify(dom.map((snapshot) => ({
-    frame: snapshot.frame, url: snapshot.url,
-    elements: snapshot.elements.map(({ id, documentId, parentId, rect, ...element }) => element),
-  }))));
+  const stateId = stableHash(
+    semanticStateId,
+    JSON.stringify(
+      dom.map((snapshot) => ({
+        frame: snapshot.frame,
+        url: snapshot.url,
+        elements: snapshot.elements.map(
+          ({ id, documentId, parentId, rect, ...element }) => element,
+        ),
+      })),
+    ),
+  );
   const artifact: StateArtifact = {
     schemaVersion: 1,
     dom,
@@ -932,7 +1103,7 @@ export async function scanState(
     routeTemplate,
     title,
     personaId,
-    buildId: options.buildId ?? 'dom-v1',
+    buildId: options.buildId ?? "dom-v1",
     capturedAt: new Date().toISOString(),
     timings,
     groups,
@@ -949,7 +1120,9 @@ export async function scanState(
       await options.onGroup({
         group,
         actions: actions.filter(({ id }) => group.actions.includes(id)),
-        observables: observables.filter(({ id }) => group.observables.includes(id)),
+        observables: observables.filter(({ id }) =>
+          group.observables.includes(id),
+        ),
       });
     }
   }

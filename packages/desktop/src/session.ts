@@ -1,3 +1,4 @@
+import type { EventEmitter } from 'node:events';
 import { createHash, randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 
@@ -6,6 +7,7 @@ import type { LoadURLOptions, WebContentsView } from 'electron';
 import {
   BOOTSTRAP_SOURCE,
   ObservationJournal,
+  PageNames,
   CdpDriver,
   mergePresentationGeometry,
   scanState,
@@ -359,6 +361,7 @@ export class DesktopSession {
   readonly #view: WebContentsView;
   readonly #transport: ElectronCdpTransport;
   readonly #driver: CdpDriver;
+  readonly pageNames: PageNames;
   readonly #journal: ObservationJournal;
   readonly #listeners = new Set<(event: OrchestratorEvent) => void>();
   readonly #artifacts = new Map<string, StateArtifact>();
@@ -372,6 +375,7 @@ export class DesktopSession {
   #lastError: string | null = null;
   #captureTimer: ReturnType<typeof setTimeout> | null = null;
   #captureQueue: Promise<void> = Promise.resolve();
+  #captureDueAt = 0;
   #captureActive = false;
   #captureReadStarted = false;
   #pendingAutomaticFollowUp: SettledSignal | null = null;
@@ -386,6 +390,8 @@ export class DesktopSession {
   #suppressCapture = true;
   #suppressTimer: ReturnType<typeof setTimeout> | null = null;
   #closed = false;
+  #stopping = false;
+  #removeLifecycle: (() => void) | null = null;
   /** Invalidates a scan whose document changed while it was being read. */
   #documentGeneration = 0;
 
@@ -402,6 +408,7 @@ export class DesktopSession {
     this.#journal = new ObservationJournal(join(options.artifactsRoot, this.id),
       (event) => this.#publish(event),
       (error) => this.#publish({ t: 'extraction.error', stateId: this.#currentStateId ?? 'current', message: `Observation persistence failed: ${String(error)}` }));
+    this.pageNames = new PageNames(join(options.artifactsRoot, this.id));
     this.#view = options.view;
     this.#transport = new ElectronCdpTransport(this.#view.webContents);
     this.#driver = new CdpDriver(this.#transport);
@@ -437,11 +444,19 @@ export class DesktopSession {
   async goto(url: string, loadOptions?: LoadURLOptions): Promise<void> {
     this.#setSuppressed(true);
     this.#publish({ t: 'extraction.started', stateId: `capture_${randomUUID()}`, url });
+    const contents = this.#view.webContents;
+    let ready: (() => void) | undefined;
+    const domReady = new Promise<void>((resolve) => { ready = resolve; contents.once('dom-ready', resolve); });
+    const loaded = contents.loadURL(url, loadOptions);
     try {
-      await this.#view.webContents.loadURL(url, loadOptions);
+      await Promise.race([loaded, domReady]);
     } finally {
+      if (ready !== undefined) contents.removeListener('dom-ready', ready);
       this.#setSuppressed(false);
     }
+    // A failure after DOM ready still needs to be reported, without keeping
+    // session creation (and consequently its event subscription) blocked.
+    void loaded.catch(() => undefined);
     this.scheduleCapture('navigation', 0);
   }
 
@@ -495,29 +510,21 @@ export class DesktopSession {
     return reset;
   }
 
-  /** Draw highlight boxes in the page. The native view cannot be drawn over. */
+  /** Each frame draws against its own live DOM, including closed shadow roots. */
   async highlight(
-    items: Array<{ x: number; y: number; w: number; h: number; label?: string; tone?: string; primary?: boolean }>,
+    items: Array<{ x: number; y: number; w: number; h: number; label?: string; tone?: string; primary?: boolean; frame?: string; selector?: string; shadowPath?: string[] }>,
   ): Promise<void> {
     const frames = await this.#driver.frames().catch(() => []);
-    const main = frames.find((frame) => frame.path === 'main');
-    if (main === undefined) return;
-    await this.#driver
-      .evaluate(main, `(payload) => { window.__nexus?.highlight(payload); }`, items)
-      .catch(() => undefined);
+    await Promise.all(frames.map((frame) => this.#driver.evaluate(frame,
+      `(payload) => { window.__nexus?.highlight(payload); }`,
+      items.filter((item) => (item.frame ?? 'main') === frame.path),
+    ).catch(() => undefined)));
   }
 
-  async clearHighlight(): Promise<void> {
-    const frames = await this.#driver.frames().catch(() => []);
-    const main = frames.find((frame) => frame.path === 'main');
-    if (main === undefined) return;
-    await this.#driver
-      .evaluate(main, `() => { window.__nexus?.clearHighlight(); }`)
-      .catch(() => undefined);
-  }
+  async clearHighlight(): Promise<void> { await this.highlight([]); }
 
   scheduleCapture(trigger: string, delay = this.#options.captureDebounceMs): void {
-    if (this.#closed) return;
+    if (this.#closed || this.#stopping) return;
     this.#settleBackoff.reset();
     this.#pendingAutomaticFollowUp = null;
     if (this.#captureTimer !== null) {
@@ -532,9 +539,24 @@ export class DesktopSession {
     }, delay);
   }
 
+  async stopRecording(): Promise<StateArtifact[]> {
+    if (!this.#closed) {
+      this.#stopping = true;
+      if (this.#captureTimer !== null) clearTimeout(this.#captureTimer);
+      this.#captureTimer = null;
+      this.#pendingAutomaticFollowUp = null;
+      await this.#captureQueue;
+      await this.#capture({ trigger: 'Recording stopped', automatic: false, causes: [] });
+      await this.close();
+    }
+    return [...this.#artifacts.values()];
+  }
+
   async close(): Promise<void> {
     if (this.#closed) return;
     this.#closed = true;
+    this.#removeLifecycle?.();
+    this.#removeLifecycle = null;
     if (this.#captureTimer !== null) clearTimeout(this.#captureTimer);
     if (this.#suppressTimer !== null) clearTimeout(this.#suppressTimer);
     await this.#driver.detach().catch(() => undefined);
@@ -577,12 +599,18 @@ export class DesktopSession {
       if (method !== 'Runtime.bindingCalled') return;
       if (params.name === '__nexusObserved') {
         if (!this.#closed && this.#journal.receive(params.payload, this.#currentStateId)) {
-          this.#scheduleAutomaticCapture({ causes: ['dom'] }, 'DOM activity');
+          let causes = ['dom'];
+          try {
+            const observations = JSON.parse(String(params.payload)) as Array<{ kind: string; type: string }>;
+            if (observations.some((item) => item.kind === 'interaction' && isInteractiveSettleCause([item.type]))) causes = ['interaction'];
+            else if (observations.some((item) => item.kind === 'property')) causes = ['value'];
+          } catch { /* Journal validation remains authoritative. */ }
+          this.#scheduleAutomaticCapture({ causes }, 'DOM activity');
         }
         return;
       }
       if (params.name !== '__nexusSettled') return;
-      if (this.#closed || this.#suppressCapture) return;
+      if (this.#closed || this.#stopping || this.#suppressCapture) return;
       let state: unknown;
       try { state = JSON.parse(String(params.payload ?? '')); } catch { return; }
       const signal = parseSettledSignal(state);
@@ -615,7 +643,7 @@ export class DesktopSession {
     signal: SettledSignal,
     trigger = 'page settled',
   ): void {
-    if (this.#closed || this.#suppressCapture) return;
+    if (this.#closed || this.#stopping || this.#suppressCapture) return;
     if (this.#captureActive) {
       // The epoch that caused the current capture was consumed before it
       // started. A distinct settle after walking begins describes a newer DOM
@@ -645,7 +673,9 @@ export class DesktopSession {
         };
         // A native user gesture is allowed to pull a neutral trailing capture
         // forward rather than waiting behind polling-noise backoff.
-        if (isInteractiveSettleCause(signal.causes) || signal.presentationChanged === true) {
+        if ((isInteractiveSettleCause(signal.causes) || signal.presentationChanged === true)
+          && this.#captureDueAt > Date.now() + this.#options.captureDebounceMs) {
+          this.#captureDueAt = Date.now() + this.#options.captureDebounceMs;
           clearTimeout(this.#captureTimer);
           const request = this.#pendingCaptureRequest;
           this.#captureTimer = setTimeout(() => {
@@ -668,6 +698,7 @@ export class DesktopSession {
       this.#options.captureDebounceMs,
       signal.presentationChanged === true ? 0 : this.#settleBackoff.delay(signal.causes),
     );
+    this.#captureDueAt = Date.now() + delay;
     this.#captureTimer = setTimeout(() => {
       this.#captureTimer = null;
       this.#enqueueCapture(this.#pendingCaptureRequest);
@@ -701,6 +732,8 @@ export class DesktopSession {
 
   #attachLifecycle(): void {
     const contents = this.#view.webContents;
+    const lifecycleEmitter = contents as EventEmitter;
+    const previous = new Map(lifecycleEmitter.eventNames().map((event) => [event, new Set(lifecycleEmitter.listeners(event))]));
     contents.on('did-start-navigation', (_event, _url, isInPlace, isMainFrame) => {
       // An in-place navigation replaces no document, so nothing is being torn
       // down and there is nothing to suppress.
@@ -716,6 +749,12 @@ export class DesktopSession {
       // committed. Keep this epoch distinct from URL-only history/hash changes;
       // the executor compares the exact URL separately for those boundaries.
       this.#documentGeneration += 1;
+    });
+    contents.on('dom-ready', () => {
+      // A usable document may keep loading images or embedded frames forever.
+      // Observe it as soon as the DOM exists; later loads trigger fresh scans.
+      this.#setSuppressed(false);
+      this.scheduleCapture('DOM ready', 0);
     });
     contents.on('did-frame-finish-load', (_event, isMainFrame) => {
       if (!isMainFrame && !this.#suppressCapture) this.scheduleCapture('iframe loaded');
@@ -738,6 +777,9 @@ export class DesktopSession {
       this.#lastError = `${description} (${code})`;
       this.#publish({ t: 'extraction.error', stateId: `capture_${randomUUID()}`, message: this.#lastError });
     });
+    const added = lifecycleEmitter.eventNames().flatMap((event) => lifecycleEmitter.listeners(event)
+      .filter((listener) => !previous.get(event)?.has(listener)).map((listener) => ({ event, listener })));
+    this.#removeLifecycle = () => { for (const { event, listener } of added) lifecycleEmitter.removeListener(event, listener as (...args: unknown[]) => void); };
   }
 
   #enqueueCapture(request: CaptureRequest): void {
@@ -805,6 +847,7 @@ export class DesktopSession {
     try {
       emitPhase('navigating');
       const scanned = await this.#options.scan(this.#driver, {
+        quiescenceTimeoutMs: 500,
         onPhase: (phase) => {
           emitPhase(phase);
           if (phase === 'walking') { this.#captureReadStarted = true; observedThrough = this.#journal.sequence; }

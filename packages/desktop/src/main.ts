@@ -16,6 +16,7 @@ const electron = createRequire(import.meta.url)('electron') as typeof import('el
 const { app, BrowserWindow, ipcMain, WebContentsView } = electron;
 
 import type { OrchestratorEvent } from '@nexus/schema';
+import { Recordings } from './recordings.js';
 import { DesktopSession } from './session.js';
 import { startSingleInstanceApplication } from './single-instance.js';
 
@@ -45,6 +46,15 @@ function httpUrl(value: unknown): string {
 let window: BrowserWindowType | null = null;
 let view: WebContentsViewType | null = null;
 let session: DesktopSession | null = null;
+let activeRecordingId: string | null = null;
+let recordingOperation: Promise<unknown> = Promise.resolve();
+let recordingStore: Recordings | null = null;
+const recordings = () => recordingStore ??= new Recordings(ARTIFACTS_ROOT());
+function serializeRecording<T>(operation: () => Promise<T>): Promise<T> {
+  const pending = recordingOperation.catch(() => undefined).then(operation);
+  recordingOperation = pending;
+  return pending;
+}
 let viewBounds: Bounds = DEFAULT_VIEW_BOUNDS;
 // The renderer and the smoke path can both ask for a session at once, and a
 // second CDP attach on the same WebContents is a hard error.
@@ -107,6 +117,34 @@ async function handle(channel: string, payload: unknown): Promise<unknown> {
   const body = (payload ?? {}) as Record<string, unknown>;
 
   switch (channel) {
+    case 'recordings.list':
+      return recordings().list(activeRecordingId);
+    case 'recordings.read':
+      return recordings().read(body.id);
+    case 'recordings.rename':
+      return recordings().rename(body.id, body.name);
+    case 'recordings.start':
+      return serializeRecording(async () => {
+        if (activeRecordingId !== null) throw new Error('Stop the current recording before starting another.');
+        const url = httpUrl(body.url);
+        if (typeof body.name !== 'string' || !body.name.trim() || body.name.trim().length > 120) throw new Error('Enter a recording name of 1–120 characters.');
+        await session?.close();
+        session = null;
+        const created = await ensureSession();
+        const recording = await recordings().create(created.id, body.name, url);
+        activeRecordingId = created.id;
+        // Return the ID before navigation so the renderer can subscribe immediately.
+        void created.goto(url).catch((error: unknown) => broadcast({ t: 'extraction.error', stateId: 'capture_navigation', message: String(error) }));
+        return recording;
+      });
+    case 'recordings.stop':
+      return serializeRecording(async () => {
+        if (activeRecordingId === null) throw new Error('No recording is active.');
+        const artifacts = await requireSession().stopRecording();
+        const recording = await recordings().finish(activeRecordingId, artifacts);
+        activeRecordingId = null;
+        return recording;
+      });
     case 'session.create': {
       const created = await ensureSession();
       await created.goto(httpUrl(body.url));
@@ -116,6 +154,10 @@ async function handle(channel: string, payload: unknown): Promise<unknown> {
       await requireSession().goto(httpUrl(body.url));
       return { accepted: true };
     }
+    case 'session.pageNames':
+      return (session !== null && body.sessionId === session.id ? session.pageNames : await recordings().pageNames(body.sessionId)).get();
+    case 'session.renamePage':
+      return (session !== null && body.sessionId === session.id ? session.pageNames : await recordings().pageNames(body.sessionId)).set(body.url, body.name);
     case 'session.states':
       return requireSession().stateIndex();
     case 'session.resetHistory':

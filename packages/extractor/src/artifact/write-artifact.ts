@@ -45,7 +45,7 @@ export function serializeArtifact(value: unknown): string {
   return `${JSON.stringify(sortKeys(value), null, 2)}\n`;
 }
 
-async function writeFileAtomically(path: string, contents: string): Promise<void> {
+export async function writeFileAtomically(path: string, contents: string): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
   const temporaryPath = `${path}.${process.pid}.${randomUUID()}.tmp`;
 

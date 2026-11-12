@@ -245,6 +245,14 @@ export class OrchestratorServer {
       }),
     );
 
+    this.app.get('/session/:id/page-names', asyncRoute(async (request, response) => {
+      response.json(await this.manager.pageNames(routeParameter(request, 'id')).get());
+    }));
+    this.app.post('/session/:id/page-names', asyncRoute(async (request, response) => {
+      const { url, name } = request.body ?? {};
+      response.json(await this.manager.pageNames(routeParameter(request, 'id')).set(url, name));
+    }));
+
     this.app.post('/session/:id/reset-history', asyncRoute(async (request, response) => {
       response.json(await this.manager.resetHistory(routeParameter(request, 'id')));
     }));

@@ -18,6 +18,11 @@ pnpm desktop
 The desktop app embeds the page in a native browser view. The web app displays
 its browser through a screencast and forwards your mouse and keyboard input.
 
+Page groups use the first captured non-empty page title, falling back to the URL.
+Use **Rename** beside a page group to set a custom name, or **Use page title**
+to restore automatic naming. Names are saved per session in `page-names.json`;
+renaming does not change page URLs or captured state identities.
+
 Use **Reset history** beside Load & Extract to clear both inspection panes and
 make a fresh snapshot of the current page the new initial state. It does not
 reload or navigate the page, clear storage, or reset form values. Subsequent
@@ -98,3 +103,18 @@ has a bounded in-page buffer; overflow is recorded as a coverage gap.
   transport, manual input forwarding, and CLI.
 - `@nexus/desktop`: Electron browser shell and live extraction.
 - `@nexus/ui`: element/state inspection and the observation timeline.
+
+## Desktop recordings
+
+Click **Load & Extract**, enter a recording name, then choose **Start recording**.
+Browse normally to capture discovered elements and states across pages.
+**Stop recording** finishes capture and opens **Recordings**. Select a saved
+recording to inspect its page groups and states, or choose **Rename recording**.
+Page-group names remain editable in saved recordings. A new recording gets a
+separate session; stop the current one before starting another.
+
+Recordings are stored in the desktop application-data `sessions` folder, with
+`recording.json` metadata, state artifacts, and `page-names.json`. They survive
+app restarts. If the app exits during capture, the saved recording appears as
+**interrupted**; already-written states remain available. Reopening a recording
+shows saved data and does not navigate the browser or resume recording.

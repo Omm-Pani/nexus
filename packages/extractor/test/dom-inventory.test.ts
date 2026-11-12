@@ -87,3 +87,29 @@ it('journals interactions, rapid intermediate mutations, property-only changes a
   expect(JSON.stringify(final.dom)).toContain('test_password with spaces');
   await page.close();
 });
+
+it('distinguishes app focus from real user focus including inside a closed shadow root', async () => {
+  const page = await browser.newPage();
+  const observed: DomObservation[] = [];
+  try {
+    await page.exposeBinding('__nexusObserved', (_source, payload: string) => { observed.push(...JSON.parse(payload) as DomObservation[]); });
+    await installInstrumentation(page);
+    await page.goto('data:text/html,' + encodeURIComponent(`<label>Username<input id="username"></label><button id="login" onclick="document.querySelector('#username').focus()">Login</button><div id="host"></div>`));
+    await page.locator('#username').click();
+    await expect.poll(() => observed.filter((entry) => entry.type === 'focusin' && entry.detail.label === 'Username').length).toBe(1);
+    expect(observed.find((entry) => entry.type === 'focusin' && entry.detail.label === 'Username')?.detail.origin).toBe('user');
+    await page.locator('#login').click();
+    await expect.poll(() => observed.filter((entry) => entry.type === 'focusin' && entry.detail.label === 'Username').length).toBe(2);
+    const returnedFocus = observed.filter((entry) => entry.type === 'focusin' && entry.detail.label === 'Username').at(-1)!;
+    expect(returnedFocus.detail).toMatchObject({ trusted: true, origin: 'system' });
+    expect(returnedFocus.causeId).toBe(observed.find((entry) => entry.type === 'click' && entry.detail.label === 'Login')?.causeId);
+    const point = await page.evaluate(() => {
+      const root = document.querySelector('#host')!.attachShadow({ mode: 'closed' });
+      root.innerHTML = '<input aria-label="Shadow field">';
+      const rect = root.querySelector('input')!.getBoundingClientRect();
+      return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
+    });
+    await page.mouse.click(point.x, point.y);
+    await expect.poll(() => observed.find((entry) => entry.type === 'focusin' && entry.detail.label === 'Shadow field')?.detail.origin).toBe('user');
+  } finally { await page.close(); }
+});
